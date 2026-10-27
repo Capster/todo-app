@@ -21,7 +21,7 @@
 
 - [x] 4.1 Refactor `src/git/repository.ts` to import the shared adapter from `./fileSystem` and replace every direct `expo-file-system` operation: checkout detection, temp cleanup, `archived/` creation, clone rename, task byte copy, existence checks, and unlink. Verify `npm run typecheck` and confirm `grep -n "expo-file-system" src/git/repository.ts` returns nothing.
 - [x] 4.2 Remove `WEB_UNSUPPORTED_MESSAGE` and all `Platform.OS === "web"` rejections from `syncRepository`, `getCreationTimestamps`, `moveTaskFile`, `restoreTaskFile`, `resetTaskIndex`, and `pushRepository` while keeping the single-flight guard, fast-forward pull, temp-clone/rename, push error inspection, and token redaction. Verify `npm run typecheck` and confirm the only remaining `Platform` use in the module is proxy selection.
-- [ ] 4.3 Confirm the refactor preserves mobile behavior by reviewing the clone path (temp directory, `.git/HEAD` detection, rename), the pull path, and the task move/restore byte operations against the adapter contract. Verify `npm run typecheck` and run the Android app to confirm clone, pull, and toggle still work.
+- [x] 4.3 Confirm the refactor preserves mobile behavior by reviewing the clone path (temp directory, `.git/HEAD` detection, rename), the pull path, and the task move/restore byte operations against the adapter contract. Verify `npm run typecheck` and run the Android app to confirm clone, pull, and toggle still work.
 
 ## 5. Web CORS Proxy Configuration
 
@@ -43,7 +43,7 @@
 
 - [x] 8.1 Run `npm run typecheck` as the final static check and confirm it exits successfully.
 - [x] 8.2 Start the web build without `EXPO_PUBLIC_GIT_CORS_PROXY` and confirm the app no longer shows an unsupported message, loads the todo screen, and reports the missing-proxy configuration error without leaking the token.
-- [ ] 8.3 Start a local CORS proxy, set `EXPO_PUBLIC_GIT_CORS_PROXY`, and in the browser confirm: first load clones into IndexedDB, reload pulls instead of cloning, the Refresh control pushes any pending commit and pulls, and checking/unchecking a task moves the file, commits, pushes, and updates the list.
-- [ ] 8.4 Confirm the browser checkout survives a page reload and that clearing site data causes the next load to clone again without crashing.
-- [ ] 8.5 Run the Android app and confirm clone on first launch, pull on later launches, and task toggle still behave as before, with no browser storage dependency.
+- [x] 8.3 Start a local CORS proxy, set `EXPO_PUBLIC_GIT_CORS_PROXY`, and in the browser confirm: first load clones into IndexedDB, reload pulls instead of cloning, the Refresh control pushes any pending commit and pulls, and checking/unchecking a task moves the file, commits, pushes, and updates the list.
+- [x] 8.4 Confirm the browser checkout survives a page reload and that clearing site data causes the next load to clone again without crashing.
+- [x] 8.5 Run the Android app and confirm clone on first launch, pull on later launches, and task toggle still behave as before, with no browser storage dependency.
 - [x] 8.6 Review the final diff for accidental secrets or raw token output and confirm every new error path is readable and sanitized.
