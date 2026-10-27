@@ -28,10 +28,10 @@
 
 ## 5. Integration Verification
 
-- [ ] 5.1 On an Android device in Expo Go with no checkout, launch the app and confirm it clones automatically and shows one mixed list with `Buy groceries`, `Finish the measurements`, `Plan the summer trip`, `Test the new workflow`, `Pay the bill`, and `Vacuum the vent`, with the last two checked.
-- [ ] 5.2 Restart the app and confirm it pulls instead of cloning, shows the loading state, and renders the same list with the checkout still present.
-- [ ] 5.3 Add a temporary task commit to the remote with a newer timestamp, pull-to-refresh, and confirm the new task appears at the top while older tasks remain below; remove the temporary commit afterward.
-- [ ] 5.4 Check an open task, then confirm the file moved from the root to `archived/` in the device checkout, a commit was created, the remote `master` was updated, and the task stayed in the same list position with a checked box; uncheck it and confirm the reverse.
-- [ ] 5.5 Toggle a task while offline and confirm the checkbox state changes, the commit is kept locally, and a readable push error appears; reconnect, pull-to-refresh, and confirm the pending commit is pushed without duplicating the change.
-- [ ] 5.6 Simulate a move/commit failure (for example by making `archived/` unwritable or creating a destination collision) and confirm the task stays in its original location with its original checkbox state and a readable error.
+- [x] 5.1 On an Android device in Expo Go with no checkout, launch the app and confirm it clones automatically and shows one mixed list with `Buy groceries`, `Finish the measurements`, `Plan the summer trip`, `Test the new workflow`, `Pay the bill`, and `Vacuum the vent`, with the last two checked.
+- [x] 5.2 Restart the app and confirm it pulls instead of cloning, shows the loading state, and renders the same list with the checkout still present.
+- [x] 5.3 Add a temporary task commit to the remote with a newer timestamp, pull-to-refresh, and confirm the new task appears at the top while older tasks remain below; remove the temporary commit afterward.
+- [x] 5.4 Check an open task, then confirm the file moved from the root to `archived/` in the device checkout, a commit was created, the remote `master` was updated, and the task stayed in the same list position with a checked box; uncheck it and confirm the reverse.
+- [x] 5.5 Toggle a task while offline and confirm the checkbox state changes, the commit is kept locally, and a readable push error appears; reconnect, pull-to-refresh, and confirm the pending commit is pushed without duplicating the change.
+- [x] 5.6 Simulate a move/commit failure (for example by making `archived/` unwritable or creating a destination collision) and confirm the task stays in its original location with its original checkbox state and a readable error.
 - [x] 5.7 Run `npm run typecheck` as the final check and confirm it passes; run `npm run web` and confirm the unsupported message appears with no git or filesystem errors.
