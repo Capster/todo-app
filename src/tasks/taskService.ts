@@ -1,12 +1,15 @@
 import {
   createTaskFile,
+  deleteTaskFile,
   getCreationTimestamps,
   getTaskMove,
   listTrackedFiles,
   moveTaskFile,
   pushRepository,
+  readTaskFile,
   resetTaskIndex,
   restoreTaskFile,
+  saveTaskFile,
   syncRepository,
 } from "../git/repository";
 import {
@@ -24,7 +27,14 @@ import {
 export type TaskView = Task;
 
 export type TaskServiceState = {
-  status: "idle" | "loading" | "refreshing" | "creating";
+  status:
+    | "idle"
+    | "loading"
+    | "refreshing"
+    | "creating"
+    | "reading"
+    | "saving"
+    | "deleting";
   tasks: TaskView[];
   pendingFileName: string | null;
   error: string | null;
@@ -40,6 +50,17 @@ export type CreateTaskResult =
   | { status: "success" }
   | { status: "saved_locally"; error: string }
   | { status: "invalid"; error: string }
+  | { status: "failed"; error: string };
+
+export type SaveTaskResult = CreateTaskResult;
+
+export type DeleteTaskResult =
+  | { status: "success" }
+  | { status: "deleted_locally"; error: string }
+  | { status: "failed"; error: string };
+
+export type LoadTaskDraftResult =
+  | { status: "loaded"; content: string }
   | { status: "failed"; error: string };
 
 export class TaskOperationBusyError extends Error {
@@ -318,4 +339,207 @@ export function createTask(
       return { status: "failed", error: messageOf(error) };
     },
   );
+}
+
+export function loadTaskDraft(
+  task: TaskView,
+): Promise<LoadTaskDraftResult> {
+  return runExclusive(async (): Promise<LoadTaskDraftResult> => {
+    update({ status: "reading", error: null });
+
+    try {
+      const content = await readTaskFile({
+        fileName: task.fileName,
+        completed: task.completed,
+      });
+      update({ status: "idle", error: null });
+
+      return { status: "loaded", content };
+    } catch (error) {
+      const errorMessage = `Could not open "${task.displayName}": ${messageOf(
+        error,
+      )}`;
+      update({ status: "idle", error: errorMessage });
+
+      return { status: "failed", error: errorMessage };
+    }
+  }).catch(error => {
+    if (error instanceof TaskOperationBusyError) {
+      return { status: "failed", error: error.message };
+    }
+
+    update({ status: "idle" });
+    return { status: "failed", error: messageOf(error) };
+  });
+}
+
+async function rebuildAfterSave(
+  original: TaskView,
+  fileName: string,
+  displayName: string,
+): Promise<TaskView[]> {
+  try {
+    const trackedFiles = await listTrackedFiles();
+    return await buildView(trackedFiles);
+  } catch {
+    return state.tasks.map(task =>
+      task.fileName === original.fileName &&
+      task.completed === original.completed
+        ? { ...task, fileName, displayName }
+        : task,
+    );
+  }
+}
+
+async function saveTaskInternal(
+  task: TaskView,
+  name: string,
+  description: string,
+): Promise<SaveTaskResult> {
+  const draft = normalizeTaskDraft(name, description);
+
+  if (!draft.ok) {
+    return { status: "invalid", error: draft.error };
+  }
+
+  update({ status: "saving", error: null });
+
+  const location = {
+    fileName: task.fileName,
+    completed: task.completed,
+  };
+
+  let nextFileName: string;
+  let displayName: string;
+
+  try {
+    const trackedFiles = await listTrackedFiles();
+    nextFileName = pickAvailableTaskFileName(
+      draft.baseName,
+      draft.hasContent,
+      trackedFiles,
+      task.fileName,
+    );
+    displayName = stripExtension(nextFileName);
+
+    const currentContent = await readTaskFile(location);
+
+    if (
+      nextFileName === task.fileName &&
+      currentContent === draft.content
+    ) {
+      update({ status: "idle", error: null });
+      return { status: "success" };
+    }
+
+    await saveTaskFile(
+      location,
+      nextFileName,
+      draft.content,
+      `Edit "${displayName}"`,
+    );
+  } catch (error) {
+    update({ status: "idle", error: null });
+    return {
+      status: "failed",
+      error: `Could not save "${task.displayName}": ${messageOf(error)}`,
+    };
+  }
+
+  const tasks = await rebuildAfterSave(task, nextFileName, displayName);
+
+  try {
+    await pushRepository();
+    update({ status: "idle", tasks, pendingFileName: null, error: null });
+    return { status: "success" };
+  } catch (error) {
+    const errorMessage = `Saved "${displayName}" locally, but could not push: ${messageOf(
+      error,
+    )}`;
+    update({ status: "idle", tasks, pendingFileName: null, error: errorMessage });
+
+    return { status: "saved_locally", error: errorMessage };
+  }
+}
+
+export function saveTask(
+  task: TaskView,
+  name: string,
+  description: string,
+): Promise<SaveTaskResult> {
+  return runExclusive(() => saveTaskInternal(task, name, description)).catch(
+    error => {
+      if (error instanceof TaskOperationBusyError) {
+        return { status: "failed", error: error.message };
+      }
+
+      update({ status: "idle" });
+      return { status: "failed", error: messageOf(error) };
+    },
+  );
+}
+
+async function rebuildAfterDelete(
+  original: TaskView,
+): Promise<TaskView[]> {
+  try {
+    const trackedFiles = await listTrackedFiles();
+    return await buildView(trackedFiles);
+  } catch {
+    return state.tasks.filter(
+      task =>
+        !(
+          task.fileName === original.fileName &&
+          task.completed === original.completed
+        ),
+    );
+  }
+}
+
+async function deleteTaskInternal(
+  task: TaskView,
+): Promise<DeleteTaskResult> {
+  update({ status: "deleting", error: null });
+
+  try {
+    await deleteTaskFile(
+      {
+        fileName: task.fileName,
+        completed: task.completed,
+      },
+      `Delete "${task.displayName}"`,
+    );
+  } catch (error) {
+    update({ status: "idle", error: null });
+    return {
+      status: "failed",
+      error: `Could not delete "${task.displayName}": ${messageOf(error)}`,
+    };
+  }
+
+  const tasks = await rebuildAfterDelete(task);
+
+  try {
+    await pushRepository();
+    update({ status: "idle", tasks, pendingFileName: null, error: null });
+    return { status: "success" };
+  } catch (error) {
+    const errorMessage = `Deleted "${task.displayName}" locally, but could not push: ${messageOf(
+      error,
+    )}`;
+    update({ status: "idle", tasks, pendingFileName: null, error: errorMessage });
+
+    return { status: "deleted_locally", error: errorMessage };
+  }
+}
+
+export function deleteTask(task: TaskView): Promise<DeleteTaskResult> {
+  return runExclusive(() => deleteTaskInternal(task)).catch(error => {
+    if (error instanceof TaskOperationBusyError) {
+      return { status: "failed", error: error.message };
+    }
+
+    update({ status: "idle" });
+    return { status: "failed", error: messageOf(error) };
+  });
 }

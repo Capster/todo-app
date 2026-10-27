@@ -13,21 +13,32 @@ import {
 
 import {
   createTask,
+  deleteTask,
   getState,
   load,
+  loadTaskDraft,
   refresh,
+  saveTask,
   setCompleted,
   subscribe,
   type CreateTaskResult,
+  type DeleteTaskResult,
+  type SaveTaskResult,
   type TaskView,
 } from "../tasks/taskService";
 import CreateTaskSheet from "./CreateTaskSheet";
+import EditTaskSheet from "./EditTaskSheet";
 import TaskRow from "./TaskRow";
+
+type SheetState =
+  | null
+  | { mode: "create" }
+  | { mode: "edit"; task: TaskView; initialDescription: string };
 
 export default function HomeScreen() {
   const isWeb = Platform.OS === "web";
   const state = useSyncExternalStore(subscribe, getState, getState);
-  const [isSheetOpen, setIsSheetOpen] = useState(false);
+  const [sheet, setSheet] = useState<SheetState>(null);
 
   useEffect(() => {
     void load().catch(() => {
@@ -38,6 +49,7 @@ export default function HomeScreen() {
   const isLoading = state.status === "loading";
   const isRefreshing = state.status === "refreshing";
   const isCreating = state.status === "creating";
+  const isEditing = state.status === "saving" || state.status === "deleting";
   const isBusy = state.status !== "idle" || state.pendingFileName !== null;
   const showInitialLoading = !state.hasLoaded && isLoading;
   const tasks = state.tasks;
@@ -59,6 +71,47 @@ export default function HomeScreen() {
     description: string,
   ): Promise<CreateTaskResult> {
     return createTask(name, description);
+  }
+
+  function handleEditTask(task: TaskView) {
+    void loadTaskDraft(task)
+      .then(result => {
+        if (result.status === "loaded") {
+          setSheet({
+            mode: "edit",
+            task,
+            initialDescription: result.content,
+          });
+        }
+      })
+      .catch(() => {
+        // The service reports load errors through its state.
+      });
+  }
+
+  function handleSaveTask(
+    name: string,
+    description: string,
+  ): Promise<SaveTaskResult> {
+    if (sheet?.mode !== "edit") {
+      return Promise.resolve({
+        status: "failed",
+        error: "No task is being edited.",
+      });
+    }
+
+    return saveTask(sheet.task, name, description);
+  }
+
+  function handleDeleteTask(): Promise<DeleteTaskResult> {
+    if (sheet?.mode !== "edit") {
+      return Promise.resolve({
+        status: "failed",
+        error: "No task is being edited.",
+      });
+    }
+
+    return deleteTask(sheet.task);
   }
 
   return (
@@ -99,6 +152,7 @@ export default function HomeScreen() {
               task={item}
               pending={state.pendingFileName === item.fileName}
               disabled={isBusy}
+              onEdit={handleEditTask}
               onToggle={handleToggle}
             />
           )}
@@ -129,12 +183,12 @@ export default function HomeScreen() {
         />
       </View>
 
-      {!isSheetOpen ? (
+      {!sheet ? (
         <Pressable
           accessibilityLabel="Create task"
           accessibilityRole="button"
           disabled={isBusy}
-          onPress={() => setIsSheetOpen(true)}
+          onPress={() => setSheet({ mode: "create" })}
           style={({ pressed }) => [
             styles.fab,
             isBusy && styles.fabDisabled,
@@ -150,10 +204,23 @@ export default function HomeScreen() {
 
       <CreateTaskSheet
         busy={isCreating}
-        onClose={() => setIsSheetOpen(false)}
+        onClose={() => setSheet(null)}
         onCreate={handleCreateTask}
-        visible={isSheetOpen}
+        visible={sheet?.mode === "create"}
       />
+
+      {sheet?.mode === "edit" ? (
+        <EditTaskSheet
+          key={`${sheet.task.completed ? "archived" : "open"}:${sheet.task.fileName}`}
+          busy={isEditing}
+          initialDescription={sheet.initialDescription}
+          initialName={sheet.task.displayName}
+          onClose={() => setSheet(null)}
+          onDelete={handleDeleteTask}
+          onSave={handleSaveTask}
+          visible
+        />
+      ) : null}
 
       <StatusBar style="auto" />
     </View>

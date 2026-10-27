@@ -75,7 +75,8 @@ The home screen shows one checklist that mixes open and completed tasks. Files
 tracked directly in the repository root are open tasks, files tracked directly
 inside `archived/` are completed tasks, and each display name is the file name
 without its final extension. The list is ordered newest first using each task's
-creation date. Task file contents are never displayed, edited, or interpreted.
+creation date. Task file contents are not read to display, order, or refresh the
+list; they are read only when you open a task for editing.
 
 Opening the screen clones the private todo repository when no local checkout
 exists and pulls `master` when it does. A loading state appears while this runs.
@@ -112,6 +113,35 @@ pushed. If the push fails, the task remains committed locally, the sheet closes,
 the new task appears at the top of the list, and the error banner explains that
 it was saved but not pushed. The next refresh pushes the pending commit before
 pulling, so the task reaches the remote without being duplicated.
+
+### Editing and deleting tasks
+
+Hold a task row (press and hold for about half a second) to open the edit sheet.
+A normal tap still toggles completion. The edit sheet uses the same bottom-half
+layout as creation and is prefilled with the task's display name and its exact
+file content. The close control, a tap on the backdrop, or the Android back
+action dismisses the sheet and discards any changes.
+
+Save trims the name and applies the same validation, `.md`/plain naming, and
+duplicate-name suffixing rules as creation, but ignores the task being edited
+when checking for duplicates. Changing the description rewrites the file content.
+A non-whitespace description produces a `<name>.md` file, and an empty or
+whitespace-only description produces a plain `<name>` file. An open task stays in
+the repository root and a completed task stays in `archived/`. Saving without
+changing the name or description closes the sheet without creating a commit.
+
+Delete permanently removes the selected open or completed task file. There is no
+confirmation or undo. If you delete a task while offline, the change stays local
+and is pushed on the next refresh.
+
+Save and delete commit with the configured app identity and push `master`. If the
+push fails, the commit stays local, the sheet closes, the list shows the change,
+and the error banner explains that it was saved or deleted but not pushed. The
+next refresh pushes the pending commit before pulling. If reading, writing,
+renaming, or committing fails, the original file name, location, and content are
+restored, no staged entry or commit remains, the sheet stays open, and the error
+appears inline. Renaming a task starts its file history at the rename commit, so
+the renamed task can move in the newest-first list.
 
 The list works on Android, iOS, and web. On mobile the checkout is stored in the
 app's document directory; in a browser it is stored in IndexedDB, so the
@@ -167,7 +197,8 @@ optional on native builds and is ignored there.
 ## Project structure
 
 - `App.tsx` - application entry point, composes the todo screen.
-- `src/components/` - todo screen, task row, and checkbox components.
+- `src/components/` - todo screen, shared task form sheet, create/edit adapters,
+  task row, and checkbox components.
 - `src/git/` - repository configuration, platform filesystem adapters
   (Expo for native, lightning-fs/IndexedDB for web), and git sync/move/push
   operations.

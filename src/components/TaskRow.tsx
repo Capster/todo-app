@@ -1,3 +1,4 @@
+import { useRef } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import type { TaskView } from "../tasks/taskService";
@@ -8,6 +9,7 @@ type TaskRowProps = {
   pending: boolean;
   disabled: boolean;
   onToggle: (fileName: string, completed: boolean) => void;
+  onEdit: (task: TaskView) => void;
 };
 
 export default function TaskRow({
@@ -15,16 +17,39 @@ export default function TaskRow({
   pending,
   disabled,
   onToggle,
+  onEdit,
 }: TaskRowProps) {
   const isDisabled = disabled || pending;
+  const longPressTriggered = useRef(false);
 
   return (
     <Pressable
+      accessibilityActions={[{ name: "edit", label: "Edit task" }]}
+      accessibilityHint="Tap to toggle completion, hold to edit"
       accessibilityRole="checkbox"
       accessibilityLabel={task.displayName}
       accessibilityState={{ checked: task.completed, disabled: isDisabled }}
       disabled={isDisabled}
-      onPress={() => onToggle(task.fileName, !task.completed)}
+      onAccessibilityAction={event => {
+        if (event.nativeEvent.actionName === "edit" && !isDisabled) {
+          onEdit(task);
+        }
+      }}
+      onLongPress={() => {
+        longPressTriggered.current = true;
+        onEdit(task);
+      }}
+      onPress={() => {
+        if (longPressTriggered.current) {
+          longPressTriggered.current = false;
+          return;
+        }
+
+        onToggle(task.fileName, !task.completed);
+      }}
+      onPressIn={() => {
+        longPressTriggered.current = false;
+      }}
       style={({ pressed }) => [
         styles.row,
         pressed && !isDisabled && styles.rowPressed,
