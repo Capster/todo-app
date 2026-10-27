@@ -7,8 +7,12 @@
   },
   "dependencies": {
     "@expo/metro-runtime": "~58.0.15",
+    "buffer": "^6.0.3",
     "expo": "~58.0.19",
+    "expo-constants": "~58.0.13",
+    "expo-file-system": "~58.0.11",
     "expo-status-bar": "~58.0.4",
+    "isomorphic-git": "^1.44.5",
     "react": "19.3.0",
     "react-dom": "19.3.0",
     "react-native": "0.88.0",

@@ -13,14 +13,19 @@ Expo Go.
 - npm (bundled with Node.js).
 - For Android device preview: the latest Expo Go app installed on an Android
   device, updated to the version compatible with Expo SDK 58.
+- A root `token` file containing a GitHub token with access to
+  `https://github.com/Capster/todo.git`. This file is gitignored and is injected
+  at build time; the app will fail to start without it.
 
 ## Setup
 
-Activate the pinned Node.js version and install dependencies:
+Activate the pinned Node.js version, install dependencies, and create the token
+file:
 
 ```bash
 nvm use
 npm install
+printf '%s\n' '<your-github-token>' > token
 ```
 
 ## Running the app
@@ -64,8 +69,22 @@ The tunnel fallback requires installing `@expo/ngrok` on first use.
 npm run typecheck
 ```
 
+## Git checkout (mobile only)
+
+The home screen can clone the private todo repository and display its tracked
+files as an indented text tree. This feature uses the device filesystem and is
+available only on Android and iOS; on the web the app shows an unsupported
+message instead. The checkout is stored in the app's document directory, so
+pressing Clone again after a restart pulls updates instead of cloning again.
+
+> The GitHub token is embedded in the JavaScript bundle at build time. Use a
+> token scoped to this repository and rotate it before distributing any build.
+
 ## Project structure
 
 - `App.tsx` - application entry point, composes the starter screen.
 - `src/components/` - reusable UI components.
+- `src/git/` - repository configuration, Expo filesystem adapter, and clone/pull
+  service.
 - `assets/` - icons and static images.
+- `token` - local, gitignored GitHub token read by `app.config.js`.
