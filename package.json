@@ -7,6 +7,7 @@
   },
   "dependencies": {
     "@expo/metro-runtime": "~58.0.15",
+    "@isomorphic-git/lightning-fs": "^4.10.3",
     "buffer": "^6.0.3",
     "expo": "~58.0.19",
     "expo-constants": "~58.0.13",
@@ -27,6 +28,7 @@
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
+    "proxy": "node scripts/git-cors-proxy.js",
     "typecheck": "tsc --noEmit"
   },
   "private": true

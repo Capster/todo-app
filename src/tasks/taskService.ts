@@ -1,5 +1,3 @@
-import { Platform } from "react-native";
-
 import {
   getCreationTimestamps,
   getTaskMove,
@@ -8,7 +6,6 @@ import {
   resetTaskIndex,
   restoreTaskFile,
   syncRepository,
-  WEB_UNSUPPORTED_MESSAGE,
 } from "../git/repository";
 import {
   deriveTasks,
@@ -114,10 +111,6 @@ export function getState(): TaskServiceState {
 }
 
 export function load(): Promise<void> {
-  if (Platform.OS === "web") {
-    return Promise.reject(new Error(WEB_UNSUPPORTED_MESSAGE));
-  }
-
   return runExclusive(async () => {
     update({ status: "loading", error: null });
 
@@ -141,10 +134,6 @@ export function load(): Promise<void> {
 }
 
 export function refresh(): Promise<void> {
-  if (Platform.OS === "web") {
-    return Promise.reject(new Error(WEB_UNSUPPORTED_MESSAGE));
-  }
-
   return runExclusive(async () => {
     update({ status: "refreshing", error: null });
 
@@ -171,10 +160,6 @@ export function setCompleted(
   fileName: string,
   completed: boolean,
 ): Promise<CompletionResult> {
-  if (Platform.OS === "web") {
-    return Promise.reject(new Error(WEB_UNSUPPORTED_MESSAGE));
-  }
-
   return runExclusive(async () => {
     const displayName =
       state.tasks.find(task => task.fileName === fileName)?.displayName ??

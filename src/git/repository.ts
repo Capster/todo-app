@@ -1,4 +1,3 @@
-import { Directory, File } from "expo-file-system";
 import git, { type PushResult } from "isomorphic-git";
 import http from "isomorphic-git/http/web";
 import { Platform } from "react-native";
@@ -7,18 +6,10 @@ import {
   AUTHOR,
   BRANCH,
   getGitToken,
-  REPOSITORY_DIRECTORY,
   REPOSITORY_URL,
+  requireGitCorsProxy,
 } from "./config";
-import {
-  expoFileSystem,
-  getDocumentDirectory,
-  promises as fileSystem,
-  toFileUri,
-} from "./expoFileSystem";
-
-export const WEB_UNSUPPORTED_MESSAGE =
-  "The todo list is not supported on the web. Use the Android or iOS app.";
+import { gitFileSystem } from "./fileSystem";
 
 export type CloneProgressCallback = (message: string) => void;
 
@@ -45,66 +36,30 @@ let syncInFlight: Promise<RepositorySnapshot> | null = null;
 let creationCache: { headOid: string; dates: Map<string, number> } | null =
   null;
 
-function repositoryPaths() {
-  const documentDirectory = getDocumentDirectory();
-  return {
-    repositoryDirectory: `${documentDirectory}/${REPOSITORY_DIRECTORY}`,
-    temporaryDirectory: `${documentDirectory}/${REPOSITORY_DIRECTORY}.tmp`,
-  };
-}
-
 function repositoryPath(path: string): string {
-  return `${repositoryPaths().repositoryDirectory}/${path}`;
+  return `${gitFileSystem.repositoryDirectory}/${path}`;
 }
 
-function checkoutExists(repositoryDirectory: string): boolean {
-  try {
-    return new File(toFileUri(`${repositoryDirectory}/.git/HEAD`)).exists;
-  } catch {
-    return false;
+function networkOptions(): { http: typeof http; corsProxy?: string } {
+  if (Platform.OS === "web") {
+    return { http, corsProxy: requireGitCorsProxy() };
   }
+
+  return { http };
 }
 
-function fileExists(path: string): boolean {
-  try {
-    return new File(toFileUri(path)).exists;
-  } catch {
-    return false;
-  }
+async function checkoutExists(): Promise<boolean> {
+  return gitFileSystem.exists(
+    `${gitFileSystem.repositoryDirectory}/.git/HEAD`,
+  );
 }
 
-function requireCheckout(): string {
-  const { repositoryDirectory } = repositoryPaths();
-
-  if (!checkoutExists(repositoryDirectory)) {
+async function requireCheckout(): Promise<string> {
+  if (!(await checkoutExists())) {
     throw new Error("The repository has not been checked out yet.");
   }
 
-  return repositoryDirectory;
-}
-
-function deleteDirectory(path: string): void {
-  try {
-    const directory = new Directory(toFileUri(path));
-    if (directory.exists) {
-      directory.delete();
-    }
-  } catch {
-    // Best-effort cleanup; a failed cleanup surfaces on the next operation.
-  }
-}
-
-function ensureDirectory(path: string): void {
-  try {
-    new Directory(toFileUri(path)).create({
-      intermediates: true,
-      idempotent: true,
-    });
-  } catch (error) {
-    if (!new Directory(toFileUri(path)).exists) {
-      throw error;
-    }
-  }
+  return gitFileSystem.repositoryDirectory;
 }
 
 function sanitizeError(error: unknown, token: string): Error {
@@ -121,12 +76,12 @@ async function cloneRepository(
   token: string,
   temporaryDirectory: string,
 ): Promise<void> {
-  deleteDirectory(temporaryDirectory);
+  await gitFileSystem.removeDirectory(temporaryDirectory);
 
   try {
     await git.clone({
-      fs: expoFileSystem,
-      http,
+      ...networkOptions(),
+      fs: gitFileSystem.gitFs,
       dir: temporaryDirectory,
       url: REPOSITORY_URL,
       ref: BRANCH,
@@ -134,9 +89,12 @@ async function cloneRepository(
       onAuth: () => ({ username: "x-access-token", password: token }),
     });
 
-    new Directory(toFileUri(temporaryDirectory)).rename(REPOSITORY_DIRECTORY);
+    await gitFileSystem.rename(
+      temporaryDirectory,
+      gitFileSystem.repositoryDirectory,
+    );
   } catch (error) {
-    deleteDirectory(temporaryDirectory);
+    await gitFileSystem.removeDirectory(temporaryDirectory);
     throw error;
   }
 }
@@ -146,8 +104,8 @@ async function pullRepository(
   repositoryDirectory: string,
 ): Promise<void> {
   await git.pull({
-    fs: expoFileSystem,
-    http,
+    ...networkOptions(),
+    fs: gitFileSystem.gitFs,
     dir: repositoryDirectory,
     ref: BRANCH,
     singleBranch: true,
@@ -161,13 +119,13 @@ async function ensureCheckout(
   token: string,
   onProgress?: CloneProgressCallback,
 ): Promise<string> {
-  const { temporaryDirectory, repositoryDirectory } = repositoryPaths();
+  const { temporaryDirectory, repositoryDirectory } = gitFileSystem;
 
-  if (checkoutExists(repositoryDirectory)) {
+  if (await checkoutExists()) {
     onProgress?.("Pulling latest changes...");
     await pullRepository(token, repositoryDirectory);
   } else {
-    deleteDirectory(repositoryDirectory);
+    await gitFileSystem.removeDirectory(repositoryDirectory);
     onProgress?.("Cloning repository...");
     await cloneRepository(token, temporaryDirectory);
   }
@@ -177,14 +135,14 @@ async function ensureCheckout(
 
 async function hasPendingPush(repositoryDirectory: string): Promise<boolean> {
   const local = await git.resolveRef({
-    fs: expoFileSystem,
+    fs: gitFileSystem.gitFs,
     dir: repositoryDirectory,
     ref: `refs/heads/${BRANCH}`,
   });
 
   try {
     const remote = await git.resolveRef({
-      fs: expoFileSystem,
+      fs: gitFileSystem.gitFs,
       dir: repositoryDirectory,
       ref: `refs/remotes/origin/${BRANCH}`,
     });
@@ -224,8 +182,8 @@ async function pushRepositoryInternal(
   repositoryDirectory: string,
 ): Promise<void> {
   const result = await git.push({
-    fs: expoFileSystem,
-    http,
+    ...networkOptions(),
+    fs: gitFileSystem.gitFs,
     dir: repositoryDirectory,
     ref: BRANCH,
     remote: "origin",
@@ -248,25 +206,26 @@ async function pushPendingIfNeeded(
   }
 }
 
-async function runSync(
-  options: SyncOptions,
-): Promise<RepositorySnapshot> {
+async function runSync(options: SyncOptions): Promise<RepositorySnapshot> {
   let token = "";
 
   try {
-    token = getGitToken();
-    const { repositoryDirectory } = repositoryPaths();
+    if (Platform.OS === "web") {
+      requireGitCorsProxy();
+    }
 
-    if (options.retryPendingPush && checkoutExists(repositoryDirectory)) {
+    token = getGitToken();
+
+    if (options.retryPendingPush && (await checkoutExists())) {
       options.onProgress?.("Pushing pending changes...");
-      await pushPendingIfNeeded(token, repositoryDirectory);
+      await pushPendingIfNeeded(token, gitFileSystem.repositoryDirectory);
     }
 
     const directory = await ensureCheckout(token, options.onProgress);
 
     options.onProgress?.("Reading tracked files...");
     const files = await git.listFiles({
-      fs: expoFileSystem,
+      fs: gitFileSystem.gitFs,
       dir: directory,
       ref: BRANCH,
     });
@@ -285,7 +244,7 @@ async function findCreationTimestamp(
 
   for (const filepath of [fileName, `archived/${fileName}`]) {
     const commits = await git.log({
-      fs: expoFileSystem,
+      fs: gitFileSystem.gitFs,
       dir: repositoryDirectory,
       ref: BRANCH,
       filepath,
@@ -308,7 +267,7 @@ async function getHeadTimestamp(
   repositoryDirectory: string,
 ): Promise<number> {
   const [head] = await git.log({
-    fs: expoFileSystem,
+    fs: gitFileSystem.gitFs,
     dir: repositoryDirectory,
     ref: BRANCH,
     depth: 1,
@@ -320,9 +279,9 @@ async function getHeadTimestamp(
 async function getCreationTimestampsInternal(
   fileNames: readonly string[],
 ): Promise<Map<string, number>> {
-  const repositoryDirectory = requireCheckout();
+  const repositoryDirectory = await requireCheckout();
   const headOid = await git.resolveRef({
-    fs: expoFileSystem,
+    fs: gitFileSystem.gitFs,
     dir: repositoryDirectory,
     ref: `refs/heads/${BRANCH}`,
   });
@@ -380,10 +339,6 @@ export function getTaskMove(fileName: string, completed: boolean): TaskMove {
 export function syncRepository(
   options: SyncOptions = {},
 ): Promise<RepositorySnapshot> {
-  if (Platform.OS === "web") {
-    return Promise.reject(new Error(WEB_UNSUPPORTED_MESSAGE));
-  }
-
   if (syncInFlight) {
     return syncInFlight;
   }
@@ -398,10 +353,6 @@ export function syncRepository(
 export async function getCreationTimestamps(
   fileNames: readonly string[],
 ): Promise<Map<string, number>> {
-  if (Platform.OS === "web") {
-    throw new Error(WEB_UNSUPPORTED_MESSAGE);
-  }
-
   let token = "";
 
   try {
@@ -416,46 +367,40 @@ export async function moveTaskFile(
   move: TaskMove,
   message: string,
 ): Promise<void> {
-  if (Platform.OS === "web") {
-    throw new Error(WEB_UNSUPPORTED_MESSAGE);
-  }
-
   let token = "";
 
   try {
     token = getGitToken();
-    const repositoryDirectory = requireCheckout();
+    const repositoryDirectory = await requireCheckout();
     const source = repositoryPath(move.sourcePath);
     const destination = repositoryPath(move.destinationPath);
 
-    if (!fileExists(source)) {
+    if (!(await gitFileSystem.exists(source))) {
       throw new Error(`Task file "${move.sourcePath}" does not exist.`);
     }
 
-    if (fileExists(destination)) {
-      throw new Error(
-        `A file already exists at "${move.destinationPath}".`,
-      );
+    if (await gitFileSystem.exists(destination)) {
+      throw new Error(`A file already exists at "${move.destinationPath}".`);
     }
 
-    ensureDirectory(repositoryPath("archived"));
+    await gitFileSystem.mkdirp(repositoryPath("archived"));
 
-    const bytes = await fileSystem.readFile(source);
-    await fileSystem.writeFile(destination, bytes);
-    await fileSystem.unlink(source);
+    const bytes = await gitFileSystem.readFile(source);
+    await gitFileSystem.writeFile(destination, bytes);
+    await gitFileSystem.unlink(source);
 
     await git.add({
-      fs: expoFileSystem,
+      fs: gitFileSystem.gitFs,
       dir: repositoryDirectory,
       filepath: move.destinationPath,
     });
     await git.remove({
-      fs: expoFileSystem,
+      fs: gitFileSystem.gitFs,
       dir: repositoryDirectory,
       filepath: move.sourcePath,
     });
     await git.commit({
-      fs: expoFileSystem,
+      fs: gitFileSystem.gitFs,
       dir: repositoryDirectory,
       ref: BRANCH,
       message,
@@ -470,29 +415,25 @@ export async function moveTaskFile(
 }
 
 export async function restoreTaskFile(move: TaskMove): Promise<void> {
-  if (Platform.OS === "web") {
-    throw new Error(WEB_UNSUPPORTED_MESSAGE);
-  }
-
   let token = "";
 
   try {
     token = getGitToken();
-    requireCheckout();
+    await requireCheckout();
 
     const source = repositoryPath(move.sourcePath);
     const destination = repositoryPath(move.destinationPath);
 
-    if (!fileExists(destination)) {
+    if (!(await gitFileSystem.exists(destination))) {
       return;
     }
 
-    if (!fileExists(source)) {
-      const bytes = await fileSystem.readFile(destination);
-      await fileSystem.writeFile(source, bytes);
+    if (!(await gitFileSystem.exists(source))) {
+      const bytes = await gitFileSystem.readFile(destination);
+      await gitFileSystem.writeFile(source, bytes);
     }
 
-    await fileSystem.unlink(destination);
+    await gitFileSystem.unlink(destination);
     invalidateCreationCache();
   } catch (error) {
     throw sanitizeError(error, token);
@@ -502,19 +443,15 @@ export async function restoreTaskFile(move: TaskMove): Promise<void> {
 export async function resetTaskIndex(
   paths: readonly string[],
 ): Promise<void> {
-  if (Platform.OS === "web") {
-    throw new Error(WEB_UNSUPPORTED_MESSAGE);
-  }
-
   let token = "";
 
   try {
     token = getGitToken();
-    const repositoryDirectory = requireCheckout();
+    const repositoryDirectory = await requireCheckout();
 
     for (const filepath of new Set(paths)) {
       await git.resetIndex({
-        fs: expoFileSystem,
+        fs: gitFileSystem.gitFs,
         dir: repositoryDirectory,
         ref: BRANCH,
         filepath,
@@ -528,15 +465,15 @@ export async function resetTaskIndex(
 }
 
 export async function pushRepository(): Promise<void> {
-  if (Platform.OS === "web") {
-    throw new Error(WEB_UNSUPPORTED_MESSAGE);
-  }
-
   let token = "";
 
   try {
+    if (Platform.OS === "web") {
+      requireGitCorsProxy();
+    }
+
     token = getGitToken();
-    const repositoryDirectory = requireCheckout();
+    const repositoryDirectory = await requireCheckout();
     await pushRepositoryInternal(token, repositoryDirectory);
   } catch (error) {
     throw sanitizeError(error, token);
