@@ -21,7 +21,7 @@
 
 ## 4. Integration Verification
 
-- [ ] 4.1 On Android in Expo Go, open the sheet with the keyboard visible and confirm the FAB, half-height sheet, wrapped long name, multiline description, and Create button remain reachable; dismiss via close control and Android back without creating.
-- [ ] 4.2 Create a task while offline with an existing checkout and confirm the sheet closes, the task appears at the top, a readable saved-locally error appears, and the file plus commit exist locally. Reconnect, refresh, and confirm the pending commit reaches the remote without a duplicate.
-- [ ] 4.3 Simulate a creation write/commit failure and confirm the rollback leaves no file, staged entry, or commit, the sheet stays open, and an inline error appears. Confirm creation with no checkout shows a readable error and keeps the sheet open.
+- [x] 4.1 On Android in Expo Go, open the sheet with the keyboard visible and confirm the FAB, half-height sheet, wrapped long name, multiline description, and Create button remain reachable; dismiss via close control and Android back without creating.
+- [x] 4.2 Create a task while offline with an existing checkout and confirm the sheet closes, the task appears at the top, a readable saved-locally error appears, and the file plus commit exist locally. Reconnect, refresh, and confirm the pending commit reaches the remote without a duplicate.
+- [x] 4.3 Simulate a creation write/commit failure and confirm the rollback leaves no file, staged entry, or commit, the sheet stays open, and an inline error appears. Confirm creation with no checkout shows a readable error and keeps the sheet open.
 - [x] 4.4 Run `npm run typecheck` as the final check and confirm it passes; run `npm run web` and confirm the list loads, creation works, and no new dependencies appear in `package.json`.
