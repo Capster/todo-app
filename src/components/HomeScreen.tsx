@@ -1,5 +1,5 @@
 import { StatusBar } from "expo-status-bar";
-import { useEffect, useSyncExternalStore } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import {
   ActivityIndicator,
   FlatList,
@@ -12,18 +12,22 @@ import {
 } from "react-native";
 
 import {
+  createTask,
   getState,
   load,
   refresh,
   setCompleted,
   subscribe,
+  type CreateTaskResult,
   type TaskView,
 } from "../tasks/taskService";
+import CreateTaskSheet from "./CreateTaskSheet";
 import TaskRow from "./TaskRow";
 
 export default function HomeScreen() {
   const isWeb = Platform.OS === "web";
   const state = useSyncExternalStore(subscribe, getState, getState);
+  const [isSheetOpen, setIsSheetOpen] = useState(false);
 
   useEffect(() => {
     void load().catch(() => {
@@ -33,6 +37,7 @@ export default function HomeScreen() {
 
   const isLoading = state.status === "loading";
   const isRefreshing = state.status === "refreshing";
+  const isCreating = state.status === "creating";
   const isBusy = state.status !== "idle" || state.pendingFileName !== null;
   const showInitialLoading = !state.hasLoaded && isLoading;
   const tasks = state.tasks;
@@ -47,6 +52,13 @@ export default function HomeScreen() {
     void refresh().catch(() => {
       // The service reports refresh errors through its state.
     });
+  }
+
+  function handleCreateTask(
+    name: string,
+    description: string,
+  ): Promise<CreateTaskResult> {
+    return createTask(name, description);
   }
 
   return (
@@ -117,6 +129,32 @@ export default function HomeScreen() {
         />
       </View>
 
+      {!isSheetOpen ? (
+        <Pressable
+          accessibilityLabel="Create task"
+          accessibilityRole="button"
+          disabled={isBusy}
+          onPress={() => setIsSheetOpen(true)}
+          style={({ pressed }) => [
+            styles.fab,
+            isBusy && styles.fabDisabled,
+            pressed && !isBusy && styles.fabPressed,
+          ]}
+        >
+          <View style={styles.plus}>
+            <View style={styles.plusVertical} />
+            <View style={styles.plusHorizontal} />
+          </View>
+        </Pressable>
+      ) : null}
+
+      <CreateTaskSheet
+        busy={isCreating}
+        onClose={() => setIsSheetOpen(false)}
+        onCreate={handleCreateTask}
+        visible={isSheetOpen}
+      />
+
       <StatusBar style="auto" />
     </View>
   );
@@ -176,7 +214,8 @@ const styles = StyleSheet.create({
     color: "#b91c1c",
   },
   listContent: {
-    paddingVertical: 4,
+    paddingTop: 4,
+    paddingBottom: 88,
   },
   emptyListContent: {
     flexGrow: 1,
@@ -198,5 +237,49 @@ const styles = StyleSheet.create({
   status: {
     fontSize: 14,
     color: "#4b5563",
+  },
+  fab: {
+    position: "absolute",
+    right: 24,
+    bottom: 32,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: "#2563eb",
+    alignItems: "center",
+    justifyContent: "center",
+    shadowColor: "#111827",
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 6,
+  },
+  fabDisabled: {
+    opacity: 0.5,
+  },
+  fabPressed: {
+    backgroundColor: "#1d4ed8",
+  },
+  plus: {
+    width: 22,
+    height: 22,
+  },
+  plusVertical: {
+    position: "absolute",
+    top: 0,
+    left: 9.5,
+    width: 3,
+    height: 22,
+    borderRadius: 2,
+    backgroundColor: "#ffffff",
+  },
+  plusHorizontal: {
+    position: "absolute",
+    top: 9.5,
+    left: 0,
+    width: 22,
+    height: 3,
+    borderRadius: 2,
+    backgroundColor: "#ffffff",
   },
 });

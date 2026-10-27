@@ -1,12 +1,19 @@
 import {
+  createTaskFile,
   getCreationTimestamps,
   getTaskMove,
+  listTrackedFiles,
   moveTaskFile,
   pushRepository,
   resetTaskIndex,
   restoreTaskFile,
   syncRepository,
 } from "../git/repository";
+import {
+  normalizeTaskDraft,
+  pickAvailableTaskFileName,
+  type ValidTaskDraft,
+} from "./taskDraft";
 import {
   deriveTasks,
   orderTasks,
@@ -17,7 +24,7 @@ import {
 export type TaskView = Task;
 
 export type TaskServiceState = {
-  status: "idle" | "loading" | "refreshing";
+  status: "idle" | "loading" | "refreshing" | "creating";
   tasks: TaskView[];
   pendingFileName: string | null;
   error: string | null;
@@ -28,6 +35,12 @@ export type CompletionResult =
   | { status: "success" }
   | { status: "rolled_back"; error: string }
   | { status: "push_failed"; error: string };
+
+export type CreateTaskResult =
+  | { status: "success" }
+  | { status: "saved_locally"; error: string }
+  | { status: "invalid"; error: string }
+  | { status: "failed"; error: string };
 
 export class TaskOperationBusyError extends Error {
   constructor() {
@@ -209,4 +222,100 @@ export function setCompleted(
       return { status: "push_failed", error: errorMessage };
     }
   });
+}
+
+type CommitTaskOutcome =
+  | { ok: true; fileName: string; displayName: string }
+  | { ok: false; error: string };
+
+async function commitNewTask(
+  draft: ValidTaskDraft,
+): Promise<CommitTaskOutcome> {
+  try {
+    const trackedFiles = await listTrackedFiles();
+    const fileName = pickAvailableTaskFileName(
+      draft.baseName,
+      draft.hasContent,
+      trackedFiles,
+    );
+    const displayName = stripExtension(fileName);
+
+    await createTaskFile(fileName, draft.content, `Create "${displayName}"`);
+
+    return { ok: true, fileName, displayName };
+  } catch (error) {
+    return {
+      ok: false,
+      error: `Could not create "${draft.baseName}": ${messageOf(error)}`,
+    };
+  }
+}
+
+async function rebuildAfterCreate(
+  fileName: string,
+  displayName: string,
+): Promise<TaskView[]> {
+  try {
+    const trackedFiles = await listTrackedFiles();
+    return await buildView(trackedFiles);
+  } catch {
+    return [
+      { fileName, displayName, completed: false },
+      ...state.tasks.filter(task => task.fileName !== fileName),
+    ];
+  }
+}
+
+async function createTaskInternal(
+  name: string,
+  description: string,
+): Promise<CreateTaskResult> {
+  const draft = normalizeTaskDraft(name, description);
+
+  if (!draft.ok) {
+    return { status: "invalid", error: draft.error };
+  }
+
+  update({ status: "creating", error: null });
+
+  const committed = await commitNewTask(draft);
+
+  if (!committed.ok) {
+    update({ status: "idle", error: null });
+    return { status: "failed", error: committed.error };
+  }
+
+  const tasks = await rebuildAfterCreate(
+    committed.fileName,
+    committed.displayName,
+  );
+
+  try {
+    await pushRepository();
+    update({ status: "idle", tasks, pendingFileName: null, error: null });
+    return { status: "success" };
+  } catch (error) {
+    const errorMessage = `Created "${committed.displayName}" locally, but could not push: ${messageOf(
+      error,
+    )}`;
+    update({ status: "idle", tasks, pendingFileName: null, error: errorMessage });
+
+    return { status: "saved_locally", error: errorMessage };
+  }
+}
+
+export function createTask(
+  name: string,
+  description: string,
+): Promise<CreateTaskResult> {
+  return runExclusive(() => createTaskInternal(name, description)).catch(
+    error => {
+      if (error instanceof TaskOperationBusyError) {
+        return { status: "failed", error: error.message };
+      }
+
+      update({ status: "idle" });
+      return { status: "failed", error: messageOf(error) };
+    },
+  );
 }

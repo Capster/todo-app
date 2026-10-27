@@ -90,6 +90,29 @@ commit succeeds, the change stays committed locally, the app shows a readable
 error, and the next refresh retries the push before pulling. If the move or
 commit fails, the task is restored to its original location and state.
 
+### Creating tasks
+
+Tap the round plus button at the bottom-right of the list to open the task
+creation sheet. The sheet covers the bottom half of the screen and contains a
+task-name field that wraps long names without accepting newlines, a multiline
+description field, and a Create button. The close control, a tap on the backdrop,
+or the Android back action dismisses the sheet without creating anything.
+
+The entered name is trimmed before use. Empty names, names containing `/` or
+`\`, and the names `.` and `..` are rejected with an inline error. When the
+description contains non-whitespace text, the app creates a root file named
+`<name>.md` containing the description exactly as entered. When the description
+is empty or whitespace-only, it creates an empty plain file named `<name>`.
+A trailing `.md` in the entered name is not duplicated. If the resulting task
+name already exists as an open or completed task, a numeric suffix (` 2`, ` 3`,
+...) is added instead of overwriting anything.
+
+The new file is committed with the configured app identity and `master` is
+pushed. If the push fails, the task remains committed locally, the sheet closes,
+the new task appears at the top of the list, and the error banner explains that
+it was saved but not pushed. The next refresh pushes the pending commit before
+pulling, so the task reaches the remote without being duplicated.
+
 The list works on Android, iOS, and web. On mobile the checkout is stored in the
 app's document directory; in a browser it is stored in IndexedDB, so the
 repository is pulled rather than cloned after a restart or page reload. Clearing
