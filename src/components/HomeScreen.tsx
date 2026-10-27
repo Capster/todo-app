@@ -4,13 +4,13 @@ import {
   ActivityIndicator,
   FlatList,
   Platform,
+  Pressable,
   RefreshControl,
   StyleSheet,
   Text,
   View,
 } from "react-native";
 
-import { WEB_UNSUPPORTED_MESSAGE } from "../git/repository";
 import {
   getState,
   load,
@@ -26,14 +26,10 @@ export default function HomeScreen() {
   const state = useSyncExternalStore(subscribe, getState, getState);
 
   useEffect(() => {
-    if (isWeb) {
-      return;
-    }
-
     void load().catch(() => {
       // The service reports load errors through its state.
     });
-  }, [isWeb]);
+  }, []);
 
   const isLoading = state.status === "loading";
   const isRefreshing = state.status === "refreshing";
@@ -43,7 +39,7 @@ export default function HomeScreen() {
 
   function handleToggle(fileName: string, completed: boolean) {
     void setCompleted(fileName, completed).catch(() => {
-      // Busy or web operations are ignored; the service owns user-facing errors.
+      // Busy operations are ignored; the service owns user-facing errors.
     });
   }
 
@@ -59,55 +55,67 @@ export default function HomeScreen() {
       <Text style={styles.subtitle}>One checklist for open and done tasks.</Text>
 
       {isWeb ? (
-        <Text style={styles.webMessage}>{WEB_UNSUPPORTED_MESSAGE}</Text>
-      ) : (
-        <View style={styles.listContainer}>
-          {state.error ? (
-            <View style={styles.errorBanner}>
-              <Text style={styles.errorText}>{state.error}</Text>
-            </View>
-          ) : null}
+        <Pressable
+          accessibilityRole="button"
+          disabled={isLoading || isRefreshing}
+          onPress={handleRefresh}
+          style={[
+            styles.refreshButton,
+            (isLoading || isRefreshing) && styles.refreshButtonDisabled,
+          ]}
+        >
+          <Text style={styles.refreshButtonText}>
+            {isRefreshing ? "Refreshing..." : "Refresh"}
+          </Text>
+        </Pressable>
+      ) : null}
 
-          <FlatList<TaskView>
-            data={tasks}
-            keyExtractor={item =>
-              `${item.completed ? "archived" : "open"}:${item.fileName}`
-            }
-            renderItem={({ item }) => (
-              <TaskRow
-                task={item}
-                pending={state.pendingFileName === item.fileName}
-                disabled={isBusy}
-                onToggle={handleToggle}
-              />
-            )}
-            ItemSeparatorComponent={() => <View style={styles.separator} />}
-            ListEmptyComponent={
-              showInitialLoading ? (
-                <View style={styles.emptyState}>
-                  <ActivityIndicator size="large" color="#2563eb" />
-                  <Text style={styles.status}>Loading tasks...</Text>
-                </View>
-              ) : state.hasLoaded ? (
-                <View style={styles.emptyState}>
-                  <Text style={styles.emptyText}>No tasks yet.</Text>
-                </View>
-              ) : undefined
-            }
-            contentContainerStyle={[
-              styles.listContent,
-              tasks.length === 0 && styles.emptyListContent,
-            ]}
-            refreshControl={
-              <RefreshControl
-                refreshing={isRefreshing}
-                onRefresh={handleRefresh}
-                enabled={!isLoading}
-              />
-            }
-          />
-        </View>
-      )}
+      <View style={styles.listContainer}>
+        {state.error ? (
+          <View style={styles.errorBanner}>
+            <Text style={styles.errorText}>{state.error}</Text>
+          </View>
+        ) : null}
+
+        <FlatList<TaskView>
+          data={tasks}
+          keyExtractor={item =>
+            `${item.completed ? "archived" : "open"}:${item.fileName}`
+          }
+          renderItem={({ item }) => (
+            <TaskRow
+              task={item}
+              pending={state.pendingFileName === item.fileName}
+              disabled={isBusy}
+              onToggle={handleToggle}
+            />
+          )}
+          ItemSeparatorComponent={() => <View style={styles.separator} />}
+          ListEmptyComponent={
+            showInitialLoading ? (
+              <View style={styles.emptyState}>
+                <ActivityIndicator size="large" color="#2563eb" />
+                <Text style={styles.status}>Loading tasks...</Text>
+              </View>
+            ) : state.hasLoaded ? (
+              <View style={styles.emptyState}>
+                <Text style={styles.emptyText}>No tasks yet.</Text>
+              </View>
+            ) : undefined
+          }
+          contentContainerStyle={[
+            styles.listContent,
+            tasks.length === 0 && styles.emptyListContent,
+          ]}
+          refreshControl={
+            <RefreshControl
+              refreshing={isRefreshing}
+              onRefresh={handleRefresh}
+              enabled={!isLoading}
+            />
+          }
+        />
+      </View>
 
       <StatusBar style="auto" />
     </View>
@@ -134,12 +142,20 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: "#4b5563",
   },
-  webMessage: {
-    marginTop: 16,
+  refreshButton: {
     alignSelf: "center",
+    borderRadius: 10,
+    backgroundColor: "#2563eb",
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+  },
+  refreshButtonDisabled: {
+    opacity: 0.5,
+  },
+  refreshButtonText: {
     fontSize: 15,
-    color: "#4b5563",
-    textAlign: "center",
+    fontWeight: "600",
+    color: "#ffffff",
   },
   listContainer: {
     flex: 1,
