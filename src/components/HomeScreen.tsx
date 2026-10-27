@@ -1,86 +1,112 @@
 import { StatusBar } from "expo-status-bar";
-import { useState } from "react";
+import { useEffect, useSyncExternalStore } from "react";
 import {
+  ActivityIndicator,
+  FlatList,
   Platform,
-  Pressable,
-  ScrollView,
+  RefreshControl,
   StyleSheet,
   Text,
   View,
 } from "react-native";
 
+import { WEB_UNSUPPORTED_MESSAGE } from "../git/repository";
 import {
-  buildTree,
-  cloneOrUpdateRepository,
-  WEB_UNSUPPORTED_MESSAGE,
-} from "../git/repository";
+  getState,
+  load,
+  refresh,
+  setCompleted,
+  subscribe,
+  type TaskView,
+} from "../tasks/taskService";
+import TaskRow from "./TaskRow";
 
 export default function HomeScreen() {
   const isWeb = Platform.OS === "web";
-  const [isRunning, setIsRunning] = useState(false);
-  const [status, setStatus] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [tree, setTree] = useState<string | null>(null);
+  const state = useSyncExternalStore(subscribe, getState, getState);
 
-  async function handleClone() {
-    if (isWeb || isRunning) {
+  useEffect(() => {
+    if (isWeb) {
       return;
     }
 
-    setIsRunning(true);
-    setError(null);
+    void load().catch(() => {
+      // The service reports load errors through its state.
+    });
+  }, [isWeb]);
 
-    try {
-      const { files } = await cloneOrUpdateRepository(setStatus);
-      setTree(buildTree(files));
-    } catch (cloneError) {
-      const message =
-        cloneError instanceof Error ? cloneError.message : String(cloneError);
-      setError(message);
-    } finally {
-      setIsRunning(false);
-      setStatus(null);
-    }
+  const isLoading = state.status === "loading";
+  const isRefreshing = state.status === "refreshing";
+  const isBusy = state.status !== "idle" || state.pendingFileName !== null;
+  const showInitialLoading = !state.hasLoaded && isLoading;
+  const tasks = state.tasks;
+
+  function handleToggle(fileName: string, completed: boolean) {
+    void setCompleted(fileName, completed).catch(() => {
+      // Busy or web operations are ignored; the service owns user-facing errors.
+    });
+  }
+
+  function handleRefresh() {
+    void refresh().catch(() => {
+      // The service reports refresh errors through its state.
+    });
   }
 
   return (
     <View style={styles.container}>
       <Text style={styles.title}>Todo App</Text>
-      <Text style={styles.subtitle}>
-        Your cross-platform todo app is ready.
-      </Text>
+      <Text style={styles.subtitle}>One checklist for open and done tasks.</Text>
 
       {isWeb ? (
         <Text style={styles.webMessage}>{WEB_UNSUPPORTED_MESSAGE}</Text>
       ) : (
-        <>
-          <Pressable
-            accessibilityRole="button"
-            disabled={isRunning}
-            onPress={handleClone}
-            style={({ pressed }) => [
-              styles.button,
-              isRunning && styles.buttonDisabled,
-              pressed && !isRunning && styles.buttonPressed,
+        <View style={styles.listContainer}>
+          {state.error ? (
+            <View style={styles.errorBanner}>
+              <Text style={styles.errorText}>{state.error}</Text>
+            </View>
+          ) : null}
+
+          <FlatList<TaskView>
+            data={tasks}
+            keyExtractor={item =>
+              `${item.completed ? "archived" : "open"}:${item.fileName}`
+            }
+            renderItem={({ item }) => (
+              <TaskRow
+                task={item}
+                pending={state.pendingFileName === item.fileName}
+                disabled={isBusy}
+                onToggle={handleToggle}
+              />
+            )}
+            ItemSeparatorComponent={() => <View style={styles.separator} />}
+            ListEmptyComponent={
+              showInitialLoading ? (
+                <View style={styles.emptyState}>
+                  <ActivityIndicator size="large" color="#2563eb" />
+                  <Text style={styles.status}>Loading tasks...</Text>
+                </View>
+              ) : state.hasLoaded ? (
+                <View style={styles.emptyState}>
+                  <Text style={styles.emptyText}>No tasks yet.</Text>
+                </View>
+              ) : undefined
+            }
+            contentContainerStyle={[
+              styles.listContent,
+              tasks.length === 0 && styles.emptyListContent,
             ]}
-          >
-            <Text style={styles.buttonLabel}>Clone</Text>
-          </Pressable>
-
-          {isRunning && (
-            <Text style={styles.status}>{status ?? "Working..."}</Text>
-          )}
-          {error && <Text style={styles.error}>{error}</Text>}
-
-          {tree !== null && (
-            <ScrollView
-              style={styles.treeContainer}
-              contentContainerStyle={styles.treeContent}
-            >
-              <Text style={styles.tree}>{tree}</Text>
-            </ScrollView>
-          )}
-        </>
+            refreshControl={
+              <RefreshControl
+                refreshing={isRefreshing}
+                onRefresh={handleRefresh}
+                enabled={!isLoading}
+              />
+            }
+          />
+        </View>
       )}
 
       <StatusBar style="auto" />
@@ -91,67 +117,70 @@ export default function HomeScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#fff",
-    alignItems: "center",
-    justifyContent: "center",
+    backgroundColor: "#f3f4f6",
+    paddingTop: 64,
+    paddingHorizontal: 16,
+    paddingBottom: 24,
     gap: 8,
-    padding: 24,
   },
   title: {
+    alignSelf: "center",
     fontSize: 28,
     fontWeight: "bold",
+    color: "#111827",
   },
   subtitle: {
+    alignSelf: "center",
     fontSize: 16,
-    color: "#555",
+    color: "#4b5563",
   },
   webMessage: {
+    marginTop: 16,
+    alignSelf: "center",
     fontSize: 15,
-    color: "#555",
+    color: "#4b5563",
     textAlign: "center",
   },
-  button: {
+  listContainer: {
+    flex: 1,
+    alignSelf: "stretch",
     marginTop: 8,
-    paddingHorizontal: 24,
-    paddingVertical: 12,
-    borderRadius: 8,
-    backgroundColor: "#2563eb",
+    gap: 8,
   },
-  buttonPressed: {
-    backgroundColor: "#1d4ed8",
+  errorBanner: {
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#fecaca",
+    backgroundColor: "#fef2f2",
+    paddingHorizontal: 14,
+    paddingVertical: 10,
   },
-  buttonDisabled: {
-    opacity: 0.5,
+  errorText: {
+    fontSize: 14,
+    color: "#b91c1c",
   },
-  buttonLabel: {
-    color: "#fff",
-    fontSize: 16,
-    fontWeight: "600",
+  listContent: {
+    paddingVertical: 4,
+  },
+  emptyListContent: {
+    flexGrow: 1,
+  },
+  separator: {
+    height: 8,
+  },
+  emptyState: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 10,
+    paddingVertical: 48,
+  },
+  emptyText: {
+    fontSize: 15,
+    color: "#6b7280",
   },
   status: {
     fontSize: 14,
-    color: "#555",
-  },
-  error: {
-    fontSize: 14,
-    color: "#b91c1c",
-    textAlign: "center",
-  },
-  treeContainer: {
-    alignSelf: "stretch",
-    flex: 1,
-    marginTop: 8,
-  },
-  treeContent: {
-    paddingVertical: 8,
-  },
-  tree: {
-    fontFamily: Platform.select({
-      ios: "Menlo",
-      android: "monospace",
-      default: "monospace",
-    }),
-    fontSize: 13,
-    color: "#111",
+    color: "#4b5563",
   },
 });

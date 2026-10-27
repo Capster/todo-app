@@ -13,9 +13,9 @@ Expo Go.
 - npm (bundled with Node.js).
 - For Android device preview: the latest Expo Go app installed on an Android
   device, updated to the version compatible with Expo SDK 58.
-- A root `token` file containing a GitHub token with access to
-  `https://github.com/Capster/todo.git`. This file is gitignored and is injected
-  at build time; the app will fail to start without it.
+- A root `token` file containing a GitHub token with read and write (push)
+  access to `https://github.com/Capster/todo.git`. This file is gitignored and
+  is injected at build time; the app will fail to start without it.
 
 ## Setup
 
@@ -69,22 +69,41 @@ The tunnel fallback requires installing `@expo/ngrok` on first use.
 npm run typecheck
 ```
 
-## Git checkout (mobile only)
+## Todo list (mobile only)
 
-The home screen can clone the private todo repository and display its tracked
-files as an indented text tree. This feature uses the device filesystem and is
-available only on Android and iOS; on the web the app shows an unsupported
-message instead. The checkout is stored in the app's document directory, so
-pressing Clone again after a restart pulls updates instead of cloning again.
+The home screen shows one checklist that mixes open and completed tasks. Files
+tracked directly in the repository root are open tasks, files tracked directly
+inside `archived/` are completed tasks, and each display name is the file name
+without its final extension. The list is ordered newest first using each task's
+creation date. Task file contents are never displayed, edited, or interpreted.
 
-> The GitHub token is embedded in the JavaScript bundle at build time. Use a
-> token scoped to this repository and rotate it before distributing any build.
+On mobile, opening the screen clones the private todo repository when no local
+checkout exists and pulls `master` when it does. A loading state appears while
+this runs. Pull down on the list to refresh: the app first pushes any pending
+local commit, then pulls the latest `master`, then re-renders the list.
+
+Checking a task moves its file from the root into `archived/`, commits the move
+with the configured app identity, and pushes `master`. Unchecking a task moves
+it back to the root and repeats the commit and push. If the push fails after the
+commit succeeds, the change stays committed locally, the app shows a readable
+error, and the next pull-to-refresh retries the push before pulling. If the move
+or commit fails, the task is restored to its original location and state.
+
+This feature uses the device filesystem and is available only on Android and
+iOS; on the web the app shows an unsupported message and performs no checkout or
+task operation. The checkout is stored in the app's document directory, so the
+repository is pulled rather than cloned after a restart.
+
+> The GitHub token is embedded in the JavaScript bundle at build time and needs
+> push permission. Use a token scoped to this repository and rotate it before
+> distributing any build.
 
 ## Project structure
 
-- `App.tsx` - application entry point, composes the starter screen.
-- `src/components/` - reusable UI components.
-- `src/git/` - repository configuration, Expo filesystem adapter, and clone/pull
-  service.
+- `App.tsx` - application entry point, composes the todo screen.
+- `src/components/` - todo screen, task row, and checkbox components.
+- `src/git/` - repository configuration, Expo filesystem adapter, and git
+  sync/move/push operations.
+- `src/tasks/` - task derivation, ordering, and the serialized task service.
 - `assets/` - icons and static images.
 - `token` - local, gitignored GitHub token read by `app.config.js`.
