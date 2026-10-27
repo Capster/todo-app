@@ -1,3 +1,4 @@
+import { Buffer } from "buffer";
 import git, { type PushResult } from "isomorphic-git";
 import http from "isomorphic-git/http/web";
 import { Platform } from "react-native";
@@ -60,6 +61,18 @@ async function requireCheckout(): Promise<string> {
   }
 
   return gitFileSystem.repositoryDirectory;
+}
+
+async function assertTaskFilePathAvailable(fileName: string): Promise<void> {
+  if (fileName.length === 0 || fileName.includes("/")) {
+    throw new Error("Invalid task file name.");
+  }
+
+  for (const path of [fileName, `archived/${fileName}`]) {
+    if (await gitFileSystem.exists(repositoryPath(path))) {
+      throw new Error(`A file already exists at "${path}".`);
+    }
+  }
 }
 
 function sanitizeError(error: unknown, token: string): Error {
@@ -348,6 +361,80 @@ export function syncRepository(
   });
 
   return syncInFlight;
+}
+
+export async function listTrackedFiles(): Promise<string[]> {
+  let token = "";
+
+  try {
+    token = getGitToken();
+    const repositoryDirectory = await requireCheckout();
+
+    return await git.listFiles({
+      fs: gitFileSystem.gitFs,
+      dir: repositoryDirectory,
+      ref: BRANCH,
+    });
+  } catch (error) {
+    throw sanitizeError(error, token);
+  }
+}
+
+export async function createTaskFile(
+  fileName: string,
+  content: string,
+  message: string,
+): Promise<void> {
+  let token = "";
+  let repositoryDirectory: string | null = null;
+  let shouldCleanUp = false;
+
+  try {
+    token = getGitToken();
+    repositoryDirectory = await requireCheckout();
+    await assertTaskFilePathAvailable(fileName);
+    shouldCleanUp = true;
+
+    const target = repositoryPath(fileName);
+    await gitFileSystem.writeFile(target, Buffer.from(content, "utf8"));
+    await git.add({
+      fs: gitFileSystem.gitFs,
+      dir: repositoryDirectory,
+      filepath: fileName,
+    });
+    await git.commit({
+      fs: gitFileSystem.gitFs,
+      dir: repositoryDirectory,
+      ref: BRANCH,
+      message,
+      author: AUTHOR,
+      committer: AUTHOR,
+    });
+
+    invalidateCreationCache();
+  } catch (error) {
+    if (repositoryDirectory && shouldCleanUp) {
+      try {
+        await gitFileSystem.unlink(repositoryPath(fileName));
+      } catch {
+        // The partial file may not exist.
+      }
+
+      try {
+        await git.resetIndex({
+          fs: gitFileSystem.gitFs,
+          dir: repositoryDirectory,
+          ref: BRANCH,
+          filepath: fileName,
+        });
+      } catch {
+        // Best-effort index reset; report the original failure below.
+      }
+    }
+
+    invalidateCreationCache();
+    throw sanitizeError(error, token);
+  }
 }
 
 export async function getCreationTimestamps(
