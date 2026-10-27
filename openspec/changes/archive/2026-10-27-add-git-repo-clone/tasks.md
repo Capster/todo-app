@@ -32,7 +32,7 @@
 
 ## 6. Integration Verification
 
-- [ ] 6.1 On an Android device in Expo Go, press Clone and confirm the private repository is checked out to the app document directory and the tree lists the same tracked files as `git -C todo ls-files` with indentation for `archived/`.
-- [ ] 6.2 Restart the app and press Clone again; confirm it pulls instead of re-cloning and the tree still renders.
-- [ ] 6.3 Disable network access and press Clone; confirm a readable error appears, the app does not crash, and any previously displayed tree remains usable.
+- [x] 6.1 On an Android device in Expo Go, press Clone and confirm the private repository is checked out to the app document directory and the tree lists the same tracked files as `git -C todo ls-files` with indentation for `archived/`.
+- [x] 6.2 Restart the app and press Clone again; confirm it pulls instead of re-cloning and the tree still renders.
+- [x] 6.3 Disable network access and press Clone; confirm a readable error appears, the app does not crash, and any previously displayed tree remains usable.
 - [x] 6.4 Run `npm run typecheck` as the final check and confirm it exits successfully; run `npm run web` to confirm the web build still renders.
