@@ -54,17 +54,16 @@ export function normalizeTaskDraft(
   };
 }
 
-function trackedTaskDisplayNames(paths: readonly string[]): string[] {
-  return deriveTasks(paths).map(task => task.displayName);
-}
-
 export function pickAvailableTaskFileName(
   baseName: string,
   hasContent: boolean,
   trackedFiles: readonly string[],
+  currentFileName?: string,
 ): string {
   const takenNames = new Set(
-    trackedTaskDisplayNames(trackedFiles).map(name => name.toLowerCase()),
+    deriveTasks(trackedFiles)
+      .filter(task => task.fileName !== currentFileName)
+      .map(task => task.displayName.toLowerCase()),
   );
 
   let candidate = baseName;

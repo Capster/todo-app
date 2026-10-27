@@ -29,6 +29,11 @@ export type TaskMove = {
   destinationPath: string;
 };
 
+export type TaskLocation = {
+  fileName: string;
+  completed: boolean;
+};
+
 type PushResultWithErrors = PushResult & {
   errors?: unknown;
 };
@@ -39,6 +44,27 @@ let creationCache: { headOid: string; dates: Map<string, number> } | null =
 
 function repositoryPath(path: string): string {
   return `${gitFileSystem.repositoryDirectory}/${path}`;
+}
+
+function taskPath(location: TaskLocation): string {
+  if (location.fileName.length === 0 || location.fileName.includes("/")) {
+    throw new Error("Invalid task file name.");
+  }
+
+  return location.completed
+    ? `archived/${location.fileName}`
+    : location.fileName;
+}
+
+function taskDestinationPath(
+  location: TaskLocation,
+  fileName: string,
+): string {
+  if (fileName.length === 0 || fileName.includes("/")) {
+    throw new Error("Invalid task file name.");
+  }
+
+  return location.completed ? `archived/${fileName}` : fileName;
 }
 
 function networkOptions(): { http: typeof http; corsProxy?: string } {
@@ -380,6 +406,29 @@ export async function listTrackedFiles(): Promise<string[]> {
   }
 }
 
+export async function readTaskFile(
+  location: TaskLocation,
+): Promise<string> {
+  let token = "";
+
+  try {
+    token = getGitToken();
+    await requireCheckout();
+
+    const path = taskPath(location);
+    const target = repositoryPath(path);
+
+    if (!(await gitFileSystem.exists(target))) {
+      throw new Error(`Task file "${path}" does not exist.`);
+    }
+
+    const bytes = await gitFileSystem.readFile(target);
+    return Buffer.from(bytes).toString("utf8");
+  } catch (error) {
+    throw sanitizeError(error, token);
+  }
+}
+
 export async function createTaskFile(
   fileName: string,
   content: string,
@@ -426,6 +475,180 @@ export async function createTaskFile(
           dir: repositoryDirectory,
           ref: BRANCH,
           filepath: fileName,
+        });
+      } catch {
+        // Best-effort index reset; report the original failure below.
+      }
+    }
+
+    invalidateCreationCache();
+    throw sanitizeError(error, token);
+  }
+}
+
+export async function saveTaskFile(
+  current: TaskLocation,
+  nextFileName: string,
+  content: string,
+  message: string,
+): Promise<void> {
+  let token = "";
+  let repositoryDirectory: string | null = null;
+  let sourcePath: string | null = null;
+  let destinationPath: string | null = null;
+  let originalBytes: Uint8Array | null = null;
+
+  try {
+    token = getGitToken();
+    repositoryDirectory = await requireCheckout();
+    sourcePath = taskPath(current);
+    destinationPath = taskDestinationPath(current, nextFileName);
+
+    const source = repositoryPath(sourcePath);
+    const destination = repositoryPath(destinationPath);
+
+    if (!(await gitFileSystem.exists(source))) {
+      throw new Error(`Task file "${sourcePath}" does not exist.`);
+    }
+
+    if (
+      destinationPath !== sourcePath &&
+      (await gitFileSystem.exists(destination))
+    ) {
+      throw new Error(`A file already exists at "${destinationPath}".`);
+    }
+
+    originalBytes = await gitFileSystem.readFile(source);
+
+    if (current.completed) {
+      await gitFileSystem.mkdirp(repositoryPath("archived"));
+    }
+
+    await gitFileSystem.writeFile(destination, Buffer.from(content, "utf8"));
+
+    if (destinationPath !== sourcePath) {
+      await gitFileSystem.unlink(source);
+    }
+
+    await git.add({
+      fs: gitFileSystem.gitFs,
+      dir: repositoryDirectory,
+      filepath: destinationPath,
+    });
+
+    if (destinationPath !== sourcePath) {
+      await git.remove({
+        fs: gitFileSystem.gitFs,
+        dir: repositoryDirectory,
+        filepath: sourcePath,
+      });
+    }
+
+    await git.commit({
+      fs: gitFileSystem.gitFs,
+      dir: repositoryDirectory,
+      ref: BRANCH,
+      message,
+      author: AUTHOR,
+      committer: AUTHOR,
+    });
+
+    invalidateCreationCache();
+  } catch (error) {
+    if (repositoryDirectory && sourcePath && destinationPath) {
+      const source = repositoryPath(sourcePath);
+      const destination = repositoryPath(destinationPath);
+
+      if (originalBytes && destinationPath !== sourcePath) {
+        try {
+          await gitFileSystem.unlink(destination);
+        } catch {
+          // The partial destination may not exist.
+        }
+      }
+
+      if (originalBytes) {
+        try {
+          await gitFileSystem.writeFile(source, originalBytes);
+        } catch {
+          // Best-effort restore; report the original failure below.
+        }
+      }
+
+      for (const filepath of new Set([sourcePath, destinationPath])) {
+        try {
+          await git.resetIndex({
+            fs: gitFileSystem.gitFs,
+            dir: repositoryDirectory,
+            ref: BRANCH,
+            filepath,
+          });
+        } catch {
+          // Best-effort index reset; report the original failure below.
+        }
+      }
+    }
+
+    invalidateCreationCache();
+    throw sanitizeError(error, token);
+  }
+}
+
+export async function deleteTaskFile(
+  location: TaskLocation,
+  message: string,
+): Promise<void> {
+  let token = "";
+  let repositoryDirectory: string | null = null;
+  let sourcePath: string | null = null;
+  let originalBytes: Uint8Array | null = null;
+
+  try {
+    token = getGitToken();
+    repositoryDirectory = await requireCheckout();
+    sourcePath = taskPath(location);
+
+    const source = repositoryPath(sourcePath);
+
+    if (!(await gitFileSystem.exists(source))) {
+      throw new Error(`Task file "${sourcePath}" does not exist.`);
+    }
+
+    originalBytes = await gitFileSystem.readFile(source);
+    await gitFileSystem.unlink(source);
+
+    await git.remove({
+      fs: gitFileSystem.gitFs,
+      dir: repositoryDirectory,
+      filepath: sourcePath,
+    });
+    await git.commit({
+      fs: gitFileSystem.gitFs,
+      dir: repositoryDirectory,
+      ref: BRANCH,
+      message,
+      author: AUTHOR,
+      committer: AUTHOR,
+    });
+
+    invalidateCreationCache();
+  } catch (error) {
+    if (repositoryDirectory && sourcePath && originalBytes) {
+      try {
+        await gitFileSystem.writeFile(
+          repositoryPath(sourcePath),
+          originalBytes,
+        );
+      } catch {
+        // Best-effort restore; report the original failure below.
+      }
+
+      try {
+        await git.resetIndex({
+          fs: gitFileSystem.gitFs,
+          dir: repositoryDirectory,
+          ref: BRANCH,
+          filepath: sourcePath,
         });
       } catch {
         // Best-effort index reset; report the original failure below.
