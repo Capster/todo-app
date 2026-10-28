@@ -1,5 +1,15 @@
 schema: spec-driven
 
+context: |
+  Keep components, hooks, and utilities atomic, decoupled, and shallow.
+  Components own presentation plus minimal glue such as a callback or a
+  single boolean expression; state, effects, orchestration, and data access
+  belong in hooks, and pure logic belongs in `src/tasks/` or `src/utils/`.
+  Keep JSX trees around two to three levels deep unless a platform or
+  accessibility constraint genuinely requires deeper nesting. Task mutations
+  are optimistic and run in a background queue; clone and pull stay
+  foreground.
+
 # Project context (optional)
 # Add only constraints that should guide OpenSpec artifacts and workflows.
 # Include constraints an agent cannot infer by reading the code.

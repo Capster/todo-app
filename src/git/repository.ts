@@ -10,6 +10,7 @@ import {
   REPOSITORY_URL,
   requireGitCorsProxy,
 } from "./config";
+import { messageOf, redactToken } from "../utils/errors";
 import { gitFileSystem } from "./fileSystem";
 
 export type CloneProgressCallback = (message: string) => void;
@@ -81,6 +82,10 @@ async function checkoutExists(): Promise<boolean> {
   );
 }
 
+export function hasCheckout(): Promise<boolean> {
+  return checkoutExists();
+}
+
 async function requireCheckout(): Promise<string> {
   if (!(await checkoutExists())) {
     throw new Error("The repository has not been checked out yet.");
@@ -102,9 +107,7 @@ async function assertTaskFilePathAvailable(fileName: string): Promise<void> {
 }
 
 function sanitizeError(error: unknown, token: string): Error {
-  const message = error instanceof Error ? error.message : String(error);
-  const sanitized = token ? message.split(token).join("[redacted]") : message;
-  return new Error(sanitized);
+  return new Error(redactToken(messageOf(error), token));
 }
 
 function invalidateCreationCache(): void {

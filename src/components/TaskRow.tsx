@@ -19,7 +19,7 @@ export default function TaskRow({
   onToggle,
   onEdit,
 }: TaskRowProps) {
-  const isDisabled = disabled || pending;
+  const isDisabled = disabled;
   const longPressTriggered = useRef(false);
 
   return (

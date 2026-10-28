@@ -78,18 +78,23 @@ without its final extension. The list is ordered newest first using each task's
 creation date. Task file contents are not read to display, order, or refresh the
 list; they are read only when you open a task for editing.
 
-Opening the screen clones the private todo repository when no local checkout
-exists and pulls `master` when it does. A loading state appears while this runs.
-On mobile, pull down on the list to refresh; in a browser, use the visible
-**Refresh** button. A refresh first pushes any pending local commit, then pulls
-the latest `master`, then re-renders the list.
+Opening the screen shows the tasks from the existing local checkout immediately,
+then pulls the latest `master` behind that view. The list shows its refreshing
+state and stays read-only until the pull settles, so a background pull cannot
+overwrite an optimistic change. On a first launch with no checkout, a loading
+state appears while the repository is cloned. On mobile, pull down on the list
+to refresh; in a browser, use the visible **Refresh** button. A refresh first
+pushes any pending local commit, then pulls the latest `master`, then re-renders
+the list.
 
-Checking a task moves its file from the root into `archived/`, commits the move
-with the configured app identity, and pushes `master`. Unchecking a task moves
-it back to the root and repeats the commit and push. If the push fails after the
-commit succeeds, the change stays committed locally, the app shows a readable
-error, and the next refresh retries the push before pulling. If the move or
-commit fails, the task is restored to its original location and state.
+Checking a task updates the list immediately, then moves its file from the root
+into `archived/`, commits the move with the configured app identity, and pushes
+`master` in the background. Unchecking a task moves it back to the root and
+repeats the background commit and push. The list stays interactive while this
+runs, and further changes are queued instead of rejected. If the push fails
+after the commit succeeds, the change stays committed locally, the app shows a
+readable error, and the next refresh retries the push before pulling. If the
+move or commit fails, the task is restored to its original location and state.
 
 ### Creating tasks
 
@@ -108,11 +113,12 @@ A trailing `.md` in the entered name is not duplicated. If the resulting task
 name already exists as an open or completed task, a numeric suffix (` 2`, ` 3`,
 ...) is added instead of overwriting anything.
 
-The new file is committed with the configured app identity and `master` is
-pushed. If the push fails, the task remains committed locally, the sheet closes,
-the new task appears at the top of the list, and the error banner explains that
-it was saved but not pushed. The next refresh pushes the pending commit before
-pulling, so the task reaches the remote without being duplicated.
+The sheet closes as soon as Create is accepted and the new task appears at the
+top of the list immediately. The file is created, committed with the configured
+app identity, and pushed in the background. If the push fails, the task remains
+committed locally and the error banner explains that it was saved but not
+pushed. The next refresh pushes the pending commit before pulling, so the task
+reaches the remote without being duplicated.
 
 ### Editing and deleting tasks
 
@@ -134,14 +140,16 @@ Delete permanently removes the selected open or completed task file. There is no
 confirmation or undo. If you delete a task while offline, the change stays local
 and is pushed on the next refresh.
 
-Save and delete commit with the configured app identity and push `master`. If the
-push fails, the commit stays local, the sheet closes, the list shows the change,
-and the error banner explains that it was saved or deleted but not pushed. The
-next refresh pushes the pending commit before pulling. If reading, writing,
-renaming, or committing fails, the original file name, location, and content are
-restored, no staged entry or commit remains, the sheet stays open, and the error
-appears inline. Renaming a task starts its file history at the rename commit, so
-the renamed task can move in the newest-first list.
+The sheet closes as soon as Save or Delete is accepted, and the list shows the
+change immediately while the file work and push run in the background. Save and
+delete commit with the configured app identity and push `master`. If the push
+fails, the commit stays local and the error banner explains that it was saved or
+deleted but not pushed. The next refresh pushes the pending commit before
+pulling. If reading, writing, renaming, or committing fails, the original file
+name, location, content, and list row are restored, no staged entry or commit
+remains, and the error appears in the banner. Invalid names are still reported
+inline while the sheet is open. Renaming a task starts its file history at the
+rename commit, so the renamed task can move in the newest-first list.
 
 The list works on Android, iOS, and web. On mobile the checkout is stored in the
 app's document directory; in a browser it is stored in IndexedDB, so the
@@ -197,11 +205,33 @@ optional on native builds and is ignored there.
 ## Project structure
 
 - `App.tsx` - application entry point, composes the todo screen.
-- `src/components/` - todo screen, shared task form sheet, create/edit adapters,
-  task row, and checkbox components.
+- `src/components/` - presentational pieces such as the home screen, task list,
+  rows, sheets, and form fields.
+- `src/hooks/` - single-purpose state and orchestration hooks for the task list,
+  sheets, forms, and animation.
+- `src/utils/` - small shared helpers such as error and token-safe formatting.
 - `src/git/` - repository configuration, platform filesystem adapters
   (Expo for native, lightning-fs/IndexedDB for web), and git sync/move/push
   operations.
-- `src/tasks/` - task derivation, ordering, and the serialized task service.
+- `src/tasks/` - task derivation, ordering, pure draft logic, and the optimistic
+  task service with its background mutation queue.
 - `assets/` - icons and static images.
 - `token` - local, gitignored GitHub token read by `app.config.js`.
+
+## Code organization
+
+Components, hooks, and utilities stay atomic, decoupled, and shallow. A
+component owns presentation and at most small glue such as a callback or a
+single boolean expression; state, effects, orchestration, and data access live
+in a hook, and pure logic lives in `src/tasks/` or `src/utils/`. Keep JSX trees
+about two to three levels deep. Go deeper only when a platform or accessibility
+requirement genuinely needs it, such as the modal and keyboard shell in
+`TaskSheetChrome`.
+
+```tsx
+// src/components/TaskList.tsx - presentation and callbacks only
+<FlatList data={tasks} renderItem={renderRow} />
+
+// src/hooks/useTaskList.ts - state, effects, and orchestration
+const state = useSyncExternalStore(subscribe, getState, getState);
+```
