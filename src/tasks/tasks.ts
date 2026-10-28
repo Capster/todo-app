@@ -8,6 +8,12 @@ export type DatedTask = Task & {
   createdAt: number;
 };
 
+export function taskKey(
+  task: Pick<Task, "fileName" | "completed">,
+): string {
+  return `${task.completed ? "archived" : "open"}:${task.fileName}`;
+}
+
 export function stripExtension(fileName: string): string {
   const lastDot = fileName.lastIndexOf(".");
   return lastDot > 0 ? fileName.slice(0, lastDot) : fileName;
