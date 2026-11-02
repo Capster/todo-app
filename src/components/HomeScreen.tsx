@@ -9,7 +9,11 @@ import EditTaskSheet from "./EditTaskSheet";
 import TaskList from "./TaskList";
 import TaskListHeader from "./TaskListHeader";
 
-export default function HomeScreen() {
+type HomeScreenProps = {
+  onOpenSettings: () => void;
+};
+
+export default function HomeScreen({ onOpenSettings }: HomeScreenProps) {
   const list = useTaskList();
   const sheets = useTaskSheets();
   const sheet = sheets.sheet;
@@ -18,6 +22,7 @@ export default function HomeScreen() {
     <View style={styles.container}>
       <TaskListHeader
         disabled={list.isLoading || list.isRefreshing}
+        onOpenSettings={onOpenSettings}
         onRefresh={list.refresh}
         refreshing={list.isRefreshing}
       />

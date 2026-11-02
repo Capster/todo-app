@@ -3,12 +3,14 @@ import { Platform, Pressable, StyleSheet, Text, View } from "react-native";
 type TaskListHeaderProps = {
   disabled: boolean;
   refreshing: boolean;
+  onOpenSettings: () => void;
   onRefresh: () => void;
 };
 
 export default function TaskListHeader({
   disabled,
   refreshing,
+  onOpenSettings,
   onRefresh,
 }: TaskListHeaderProps) {
   const isWeb = Platform.OS === "web";
@@ -30,6 +32,19 @@ export default function TaskListHeader({
           </Text>
         </Pressable>
       ) : null}
+
+      <Pressable
+        accessibilityLabel="Settings"
+        accessibilityRole="button"
+        hitSlop={8}
+        onPress={onOpenSettings}
+        style={({ pressed }) => [
+          styles.settingsButton,
+          pressed && styles.settingsButtonPressed,
+        ]}
+      >
+        <Text style={styles.settingsIcon}>{"\u2699\uFE0E"}</Text>
+      </Pressable>
     </View>
   );
 }
@@ -38,6 +53,24 @@ const styles = StyleSheet.create({
   container: {
     alignItems: "center",
     gap: 8,
+  },
+  settingsButton: {
+    position: "absolute",
+    top: 0,
+    right: 0,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  settingsButtonPressed: {
+    backgroundColor: "#e5e7eb",
+  },
+  settingsIcon: {
+    fontSize: 24,
+    lineHeight: 28,
+    color: "#374151",
   },
   title: {
     fontSize: 28,
