@@ -13,19 +13,17 @@ Expo Go.
 - npm (bundled with Node.js).
 - For Android device preview: the latest Expo Go app installed on an Android
   device, updated to the version compatible with Expo SDK 58.
-- A root `token` file containing a GitHub token with read and write (push)
-  access to `https://github.com/Capster/todo.git`. This file is gitignored and
-  is injected at build time; the app will fail to start without it.
+- A git repository URL, the branch to use, and an access token with read and
+  write (push) access to that repository. You enter these in the app's settings
+  screen; no build-time token file is needed.
 
 ## Setup
 
-Activate the pinned Node.js version, install dependencies, and create the token
-file:
+Activate the pinned Node.js version and install dependencies:
 
 ```bash
 nvm use
 npm install
-printf '%s\n' '<your-github-token>' > token
 ```
 
 ## Running the app
@@ -69,6 +67,40 @@ The tunnel fallback requires installing `@expo/ngrok` on first use.
 npm run typecheck
 ```
 
+## Git settings
+
+The app reads the repository URL, branch, and token from its own settings screen
+instead of build-time constants. On first launch, or whenever the saved values
+are missing or invalid, the app opens the settings screen instead of the task
+list and does not clone or pull. The settings route is also reachable at any time
+from the cog icon in the top-right corner of the home screen; the icon stays
+available while the list is loading, refreshing, or syncing.
+
+The settings screen contains repository URL, branch, token, author name, and
+author email fields. All five start empty on a first launch. Author name and
+email are optional; when either is blank, commits use the default `Todo App` name
+or `todo-app@example.com` email for that field.
+
+- **Save** validates the values and persists them without contacting the
+  repository. It returns to the list when no checkout exists or the existing
+  checkout matches the saved repository and branch. If the checkout was created
+  for another repository or branch, the screen stays open and says that Clone is
+  required.
+- **Clone** validates and saves first, then clones the configured repository and
+  branch in the foreground with a visible in-progress state and replaces any
+  existing checkout. The clone is written to a temporary directory and only
+  moved into place after it succeeds, so a failed clone leaves the previous
+  checkout usable and leaves no partial checkout. Overlapping clone requests share
+  one operation. On success the app opens the task list; on failure the settings
+  screen shows a readable error that never contains the token.
+
+On Android and iOS the token is stored with the platform secure credential store
+(`expo-secure-store`). On web it is stored in browser `localStorage`, which is
+not encrypted and is visible to scripts on the page; it persists across reloads
+and is removed when you clear site data. The non-secret values are stored
+separately from the token. The token is never embedded in the bundle and is
+redacted from logs and user-facing errors.
+
 ## Todo list
 
 The home screen shows one checklist that mixes open and completed tasks. Files
@@ -78,19 +110,19 @@ without its final extension. The list is ordered newest first using each task's
 creation date. Task file contents are not read to display, order, or refresh the
 list; they are read only when you open a task for editing.
 
-Opening the screen shows the tasks from the existing local checkout immediately,
-then pulls the latest `master` behind that view. The list shows its refreshing
-state and stays read-only until the pull settles, so a background pull cannot
-overwrite an optimistic change. On a first launch with no checkout, a loading
-state appears while the repository is cloned. On mobile, pull down on the list
-to refresh; in a browser, use the visible **Refresh** button. A refresh first
-pushes any pending local commit, then pulls the latest `master`, then re-renders
-the list.
+Opening the screen shows the tasks from the existing matching local checkout
+immediately, then pulls the latest configured branch behind that view. The list
+shows its refreshing state and stays read-only until the pull settles, so a
+background pull cannot overwrite an optimistic change. On a first launch with no
+checkout, a loading state appears while the repository is cloned. On mobile, pull
+down on the list to refresh; in a browser, use the visible **Refresh** button. A
+refresh first pushes any pending local commit, then pulls the latest configured
+branch, then re-renders the list.
 
 Checking a task updates the list immediately, then moves its file from the root
-into `archived/`, commits the move with the configured app identity, and pushes
-`master` in the background. Unchecking a task moves it back to the root and
-repeats the background commit and push. The list stays interactive while this
+into `archived/`, commits the move with the configured author identity, and
+pushes the configured branch in the background. Unchecking a task moves it back
+to the root and repeats the background commit and push. The list stays interactive while this
 runs, and further changes are queued instead of rejected. If the push fails
 after the commit succeeds, the change stays committed locally, the app shows a
 readable error, and the next refresh retries the push before pulling. If the
@@ -115,7 +147,7 @@ name already exists as an open or completed task, a numeric suffix (` 2`, ` 3`,
 
 The sheet closes as soon as Create is accepted and the new task appears at the
 top of the list immediately. The file is created, committed with the configured
-app identity, and pushed in the background. If the push fails, the task remains
+author identity, and pushed in the background. If the push fails, the task remains
 committed locally and the error banner explains that it was saved but not
 pushed. The next refresh pushes the pending commit before pulling, so the task
 reaches the remote without being duplicated.
@@ -142,7 +174,8 @@ and is pushed on the next refresh.
 
 The sheet closes as soon as Save or Delete is accepted, and the list shows the
 change immediately while the file work and push run in the background. Save and
-delete commit with the configured app identity and push `master`. If the push
+delete commit with the configured author identity and push the configured
+branch. If the push
 fails, the commit stays local and the error banner explains that it was saved or
 deleted but not pushed. The next refresh pushes the pending commit before
 pulling. If reading, writing, renaming, or committing fails, the original file
@@ -197,26 +230,31 @@ You can override the bind address and port with `GIT_CORS_PROXY_HOST` and
 the app at a public proxy; the proxy sees the GitHub token. The same variable is
 optional on native builds and is ignored there.
 
-> The GitHub token is embedded in the JavaScript bundle at build time and needs
-> push permission. On web it is visible in the browser bundle and is forwarded
-> to the configured CORS proxy. Use a token scoped to this repository, prefer a
-> trusted local proxy, and rotate the token before distributing any build.
+> The token you save needs push permission and is forwarded to the configured
+> CORS proxy during git operations. On web it is kept in browser local storage,
+> is not encrypted, and is visible to scripts on the page. Use a token scoped to
+> the configured repository and prefer a trusted local proxy.
 
 ## Project structure
 
-- `App.tsx` - application entry point, composes the todo screen.
-- `src/components/` - presentational pieces such as the home screen, task list,
-  rows, sheets, and form fields.
+- `index.ts` - Expo entry point that installs the `Buffer` polyfill and loads
+  `expo-router/entry`.
+- `src/app/` - file-based routes: the shared stack layout, the home route, and
+  the settings route.
+- `src/components/` - presentational pieces such as the home screen, settings
+  screen and fields, task list, rows, sheets, and form fields.
 - `src/hooks/` - single-purpose state and orchestration hooks for the task list,
-  sheets, forms, and animation.
+  sheets, forms, settings, onboarding gate, and animation.
+- `src/settings/` - git settings model and validation, checkout matching, the
+  cached settings service, and platform credential storage (SecureStore for
+  native, guarded `localStorage` for web).
 - `src/utils/` - small shared helpers such as error and token-safe formatting.
-- `src/git/` - repository configuration, platform filesystem adapters
-  (Expo for native, lightning-fs/IndexedDB for web), and git sync/move/push
-  operations.
+- `src/git/` - checkout association, platform filesystem adapters
+  (Expo for native, lightning-fs/IndexedDB for web), CORS proxy helpers, and git
+  sync/clone/move/push operations that read the active saved settings.
 - `src/tasks/` - task derivation, ordering, pure draft logic, and the optimistic
   task service with its background mutation queue.
 - `assets/` - icons and static images.
-- `token` - local, gitignored GitHub token read by `app.config.js`.
 
 ## Code organization
 

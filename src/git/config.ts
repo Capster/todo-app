@@ -1,7 +1,5 @@
 import Constants from 'expo-constants';
 
-export const REPOSITORY_URL = 'https://github.com/Capster/todo.git';
-export const BRANCH = 'master';
 export const REPOSITORY_DIRECTORY = 'todo-repo';
 export const GIT_CORS_PROXY_ENV = 'EXPO_PUBLIC_GIT_CORS_PROXY';
 export const AUTHOR = {
@@ -9,17 +7,17 @@ export const AUTHOR = {
   email: 'todo-app@example.com',
 };
 
-export function getGitToken(): string {
-  const token = Constants.expoConfig?.extra?.gitToken;
+export type GitAuthor = {
+  name: string;
+  email: string;
+};
 
-  if (typeof token !== 'string' || token.trim() === '') {
-    throw new Error(
-      'Git token is missing. Add a token file to the project root and restart the app.',
-    );
-  }
-
-  return token.trim();
-}
+export type GitConnection = {
+  repositoryUrl: string;
+  branch: string;
+  token: string;
+  author: GitAuthor;
+};
 
 export function getGitCorsProxy(): string | undefined {
   const proxy = Constants.expoConfig?.extra?.gitCorsProxy;

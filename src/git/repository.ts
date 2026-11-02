@@ -3,15 +3,13 @@ import git, { type PushResult } from "isomorphic-git";
 import http from "isomorphic-git/http/web";
 import { Platform } from "react-native";
 
-import {
-  AUTHOR,
-  BRANCH,
-  getGitToken,
-  REPOSITORY_URL,
-  requireGitCorsProxy,
-} from "./config";
+import { getActiveConnection } from "../settings/settingsService";
 import { messageOf, redactToken } from "../utils/errors";
+import { hasCheckout } from "./checkout";
+import { requireGitCorsProxy, type GitConnection } from "./config";
 import { gitFileSystem } from "./fileSystem";
+
+export { hasCheckout };
 
 export type CloneProgressCallback = (message: string) => void;
 
@@ -40,6 +38,7 @@ type PushResultWithErrors = PushResult & {
 };
 
 let syncInFlight: Promise<RepositorySnapshot> | null = null;
+let cloneInFlight: Promise<void> | null = null;
 let creationCache: { headOid: string; dates: Map<string, number> } | null =
   null;
 
@@ -76,18 +75,8 @@ function networkOptions(): { http: typeof http; corsProxy?: string } {
   return { http };
 }
 
-async function checkoutExists(): Promise<boolean> {
-  return gitFileSystem.exists(
-    `${gitFileSystem.repositoryDirectory}/.git/HEAD`,
-  );
-}
-
-export function hasCheckout(): Promise<boolean> {
-  return checkoutExists();
-}
-
 async function requireCheckout(): Promise<string> {
-  if (!(await checkoutExists())) {
+  if (!(await hasCheckout())) {
     throw new Error("The repository has not been checked out yet.");
   }
 
@@ -114,23 +103,32 @@ function invalidateCreationCache(): void {
   creationCache = null;
 }
 
+async function cloneIntoDirectory(
+  connection: GitConnection,
+  directory: string,
+): Promise<void> {
+  await git.clone({
+    ...networkOptions(),
+    fs: gitFileSystem.gitFs,
+    dir: directory,
+    url: connection.repositoryUrl,
+    ref: connection.branch,
+    singleBranch: true,
+    onAuth: () => ({
+      username: "x-access-token",
+      password: connection.token,
+    }),
+  });
+}
+
 async function cloneRepository(
-  token: string,
+  connection: GitConnection,
   temporaryDirectory: string,
 ): Promise<void> {
   await gitFileSystem.removeDirectory(temporaryDirectory);
 
   try {
-    await git.clone({
-      ...networkOptions(),
-      fs: gitFileSystem.gitFs,
-      dir: temporaryDirectory,
-      url: REPOSITORY_URL,
-      ref: BRANCH,
-      singleBranch: true,
-      onAuth: () => ({ username: "x-access-token", password: token }),
-    });
-
+    await cloneIntoDirectory(connection, temporaryDirectory);
     await gitFileSystem.rename(
       temporaryDirectory,
       gitFileSystem.repositoryDirectory,
@@ -142,51 +140,98 @@ async function cloneRepository(
 }
 
 async function pullRepository(
-  token: string,
+  connection: GitConnection,
   repositoryDirectory: string,
 ): Promise<void> {
   await git.pull({
     ...networkOptions(),
     fs: gitFileSystem.gitFs,
     dir: repositoryDirectory,
-    ref: BRANCH,
+    ref: connection.branch,
     singleBranch: true,
     fastForwardOnly: true,
-    author: AUTHOR,
-    onAuth: () => ({ username: "x-access-token", password: token }),
+    author: connection.author,
+    onAuth: () => ({
+      username: "x-access-token",
+      password: connection.token,
+    }),
   });
 }
 
 async function ensureCheckout(
-  token: string,
+  connection: GitConnection,
   onProgress?: CloneProgressCallback,
 ): Promise<string> {
   const { temporaryDirectory, repositoryDirectory } = gitFileSystem;
 
-  if (await checkoutExists()) {
+  if (await hasCheckout()) {
     onProgress?.("Pulling latest changes...");
-    await pullRepository(token, repositoryDirectory);
+    await pullRepository(connection, repositoryDirectory);
   } else {
     await gitFileSystem.removeDirectory(repositoryDirectory);
     onProgress?.("Cloning repository...");
-    await cloneRepository(token, temporaryDirectory);
+    await cloneRepository(connection, temporaryDirectory);
   }
 
   return repositoryDirectory;
 }
 
-async function hasPendingPush(repositoryDirectory: string): Promise<boolean> {
+async function runConfiguredClone(
+  connection: GitConnection,
+  onProgress?: CloneProgressCallback,
+): Promise<void> {
+  let token = "";
+
+  try {
+    if (Platform.OS === "web") {
+      requireGitCorsProxy();
+    }
+
+    token = connection.token;
+    const { temporaryDirectory, repositoryDirectory } = gitFileSystem;
+
+    await gitFileSystem.removeDirectory(temporaryDirectory);
+    onProgress?.("Cloning repository...");
+    await cloneIntoDirectory(connection, temporaryDirectory);
+
+    await gitFileSystem.removeDirectory(repositoryDirectory);
+    await gitFileSystem.rename(temporaryDirectory, repositoryDirectory);
+  } catch (error) {
+    await gitFileSystem.removeDirectory(gitFileSystem.temporaryDirectory);
+    throw sanitizeError(error, token);
+  }
+}
+
+export function cloneConfiguredRepository(
+  connection: GitConnection,
+  onProgress?: CloneProgressCallback,
+): Promise<void> {
+  if (cloneInFlight) {
+    return cloneInFlight;
+  }
+
+  cloneInFlight = runConfiguredClone(connection, onProgress).finally(() => {
+    cloneInFlight = null;
+  });
+
+  return cloneInFlight;
+}
+
+async function hasPendingPush(
+  connection: GitConnection,
+  repositoryDirectory: string,
+): Promise<boolean> {
   const local = await git.resolveRef({
     fs: gitFileSystem.gitFs,
     dir: repositoryDirectory,
-    ref: `refs/heads/${BRANCH}`,
+    ref: `refs/heads/${connection.branch}`,
   });
 
   try {
     const remote = await git.resolveRef({
       fs: gitFileSystem.gitFs,
       dir: repositoryDirectory,
-      ref: `refs/remotes/origin/${BRANCH}`,
+      ref: `refs/remotes/origin/${connection.branch}`,
     });
     return local !== remote;
   } catch {
@@ -220,16 +265,19 @@ function collectPushErrors(result: PushResult): string[] {
 }
 
 async function pushRepositoryInternal(
-  token: string,
+  connection: GitConnection,
   repositoryDirectory: string,
 ): Promise<void> {
   const result = await git.push({
     ...networkOptions(),
     fs: gitFileSystem.gitFs,
     dir: repositoryDirectory,
-    ref: BRANCH,
+    ref: connection.branch,
     remote: "origin",
-    onAuth: () => ({ username: "x-access-token", password: token }),
+    onAuth: () => ({
+      username: "x-access-token",
+      password: connection.token,
+    }),
   });
 
   const errors = collectPushErrors(result);
@@ -240,11 +288,11 @@ async function pushRepositoryInternal(
 }
 
 async function pushPendingIfNeeded(
-  token: string,
+  connection: GitConnection,
   repositoryDirectory: string,
 ): Promise<void> {
-  if (await hasPendingPush(repositoryDirectory)) {
-    await pushRepositoryInternal(token, repositoryDirectory);
+  if (await hasPendingPush(connection, repositoryDirectory)) {
+    await pushRepositoryInternal(connection, repositoryDirectory);
   }
 }
 
@@ -256,20 +304,24 @@ async function runSync(options: SyncOptions): Promise<RepositorySnapshot> {
       requireGitCorsProxy();
     }
 
-    token = getGitToken();
+    const connection = await getActiveConnection();
+    token = connection.token;
 
-    if (options.retryPendingPush && (await checkoutExists())) {
+    if (options.retryPendingPush && (await hasCheckout())) {
       options.onProgress?.("Pushing pending changes...");
-      await pushPendingIfNeeded(token, gitFileSystem.repositoryDirectory);
+      await pushPendingIfNeeded(
+        connection,
+        gitFileSystem.repositoryDirectory,
+      );
     }
 
-    const directory = await ensureCheckout(token, options.onProgress);
+    const directory = await ensureCheckout(connection, options.onProgress);
 
     options.onProgress?.("Reading tracked files...");
     const files = await git.listFiles({
       fs: gitFileSystem.gitFs,
       dir: directory,
-      ref: BRANCH,
+      ref: connection.branch,
     });
 
     return { files };
@@ -281,6 +333,7 @@ async function runSync(options: SyncOptions): Promise<RepositorySnapshot> {
 async function findCreationTimestamp(
   repositoryDirectory: string,
   fileName: string,
+  branch: string,
 ): Promise<number | null> {
   const timestamps: number[] = [];
 
@@ -288,7 +341,7 @@ async function findCreationTimestamp(
     const commits = await git.log({
       fs: gitFileSystem.gitFs,
       dir: repositoryDirectory,
-      ref: BRANCH,
+      ref: branch,
       filepath,
       force: true,
     });
@@ -307,11 +360,12 @@ async function findCreationTimestamp(
 
 async function getHeadTimestamp(
   repositoryDirectory: string,
+  branch: string,
 ): Promise<number> {
   const [head] = await git.log({
     fs: gitFileSystem.gitFs,
     dir: repositoryDirectory,
-    ref: BRANCH,
+    ref: branch,
     depth: 1,
   });
 
@@ -320,12 +374,13 @@ async function getHeadTimestamp(
 
 async function getCreationTimestampsInternal(
   fileNames: readonly string[],
+  branch: string,
 ): Promise<Map<string, number>> {
   const repositoryDirectory = await requireCheckout();
   const headOid = await git.resolveRef({
     fs: gitFileSystem.gitFs,
     dir: repositoryDirectory,
-    ref: `refs/heads/${BRANCH}`,
+    ref: `refs/heads/${branch}`,
   });
 
   let cache = creationCache;
@@ -346,10 +401,14 @@ async function getCreationTimestampsInternal(
       continue;
     }
 
-    let createdAt = await findCreationTimestamp(repositoryDirectory, fileName);
+    let createdAt = await findCreationTimestamp(
+      repositoryDirectory,
+      fileName,
+      branch,
+    );
 
     if (createdAt === null) {
-      headTimestamp ??= await getHeadTimestamp(repositoryDirectory);
+      headTimestamp ??= await getHeadTimestamp(repositoryDirectory, branch);
       createdAt = headTimestamp;
     }
 
@@ -396,13 +455,14 @@ export async function listTrackedFiles(): Promise<string[]> {
   let token = "";
 
   try {
-    token = getGitToken();
+    const connection = await getActiveConnection();
+    token = connection.token;
     const repositoryDirectory = await requireCheckout();
 
     return await git.listFiles({
       fs: gitFileSystem.gitFs,
       dir: repositoryDirectory,
-      ref: BRANCH,
+      ref: connection.branch,
     });
   } catch (error) {
     throw sanitizeError(error, token);
@@ -415,7 +475,8 @@ export async function readTaskFile(
   let token = "";
 
   try {
-    token = getGitToken();
+    const connection = await getActiveConnection();
+    token = connection.token;
     await requireCheckout();
 
     const path = taskPath(location);
@@ -439,10 +500,13 @@ export async function createTaskFile(
 ): Promise<void> {
   let token = "";
   let repositoryDirectory: string | null = null;
+  let branch: string | null = null;
   let shouldCleanUp = false;
 
   try {
-    token = getGitToken();
+    const connection = await getActiveConnection();
+    token = connection.token;
+    branch = connection.branch;
     repositoryDirectory = await requireCheckout();
     await assertTaskFilePathAvailable(fileName);
     shouldCleanUp = true;
@@ -457,15 +521,15 @@ export async function createTaskFile(
     await git.commit({
       fs: gitFileSystem.gitFs,
       dir: repositoryDirectory,
-      ref: BRANCH,
+      ref: branch,
       message,
-      author: AUTHOR,
-      committer: AUTHOR,
+      author: connection.author,
+      committer: connection.author,
     });
 
     invalidateCreationCache();
   } catch (error) {
-    if (repositoryDirectory && shouldCleanUp) {
+    if (repositoryDirectory && branch && shouldCleanUp) {
       try {
         await gitFileSystem.unlink(repositoryPath(fileName));
       } catch {
@@ -476,7 +540,7 @@ export async function createTaskFile(
         await git.resetIndex({
           fs: gitFileSystem.gitFs,
           dir: repositoryDirectory,
-          ref: BRANCH,
+          ref: branch,
           filepath: fileName,
         });
       } catch {
@@ -497,12 +561,15 @@ export async function saveTaskFile(
 ): Promise<void> {
   let token = "";
   let repositoryDirectory: string | null = null;
+  let branch: string | null = null;
   let sourcePath: string | null = null;
   let destinationPath: string | null = null;
   let originalBytes: Uint8Array | null = null;
 
   try {
-    token = getGitToken();
+    const connection = await getActiveConnection();
+    token = connection.token;
+    branch = connection.branch;
     repositoryDirectory = await requireCheckout();
     sourcePath = taskPath(current);
     destinationPath = taskDestinationPath(current, nextFileName);
@@ -550,15 +617,15 @@ export async function saveTaskFile(
     await git.commit({
       fs: gitFileSystem.gitFs,
       dir: repositoryDirectory,
-      ref: BRANCH,
+      ref: branch,
       message,
-      author: AUTHOR,
-      committer: AUTHOR,
+      author: connection.author,
+      committer: connection.author,
     });
 
     invalidateCreationCache();
   } catch (error) {
-    if (repositoryDirectory && sourcePath && destinationPath) {
+    if (repositoryDirectory && branch && sourcePath && destinationPath) {
       const source = repositoryPath(sourcePath);
       const destination = repositoryPath(destinationPath);
 
@@ -583,7 +650,7 @@ export async function saveTaskFile(
           await git.resetIndex({
             fs: gitFileSystem.gitFs,
             dir: repositoryDirectory,
-            ref: BRANCH,
+            ref: branch,
             filepath,
           });
         } catch {
@@ -603,11 +670,14 @@ export async function deleteTaskFile(
 ): Promise<void> {
   let token = "";
   let repositoryDirectory: string | null = null;
+  let branch: string | null = null;
   let sourcePath: string | null = null;
   let originalBytes: Uint8Array | null = null;
 
   try {
-    token = getGitToken();
+    const connection = await getActiveConnection();
+    token = connection.token;
+    branch = connection.branch;
     repositoryDirectory = await requireCheckout();
     sourcePath = taskPath(location);
 
@@ -628,15 +698,15 @@ export async function deleteTaskFile(
     await git.commit({
       fs: gitFileSystem.gitFs,
       dir: repositoryDirectory,
-      ref: BRANCH,
+      ref: branch,
       message,
-      author: AUTHOR,
-      committer: AUTHOR,
+      author: connection.author,
+      committer: connection.author,
     });
 
     invalidateCreationCache();
   } catch (error) {
-    if (repositoryDirectory && sourcePath && originalBytes) {
+    if (repositoryDirectory && branch && sourcePath && originalBytes) {
       try {
         await gitFileSystem.writeFile(
           repositoryPath(sourcePath),
@@ -650,7 +720,7 @@ export async function deleteTaskFile(
         await git.resetIndex({
           fs: gitFileSystem.gitFs,
           dir: repositoryDirectory,
-          ref: BRANCH,
+          ref: branch,
           filepath: sourcePath,
         });
       } catch {
@@ -669,8 +739,9 @@ export async function getCreationTimestamps(
   let token = "";
 
   try {
-    token = getGitToken();
-    return await getCreationTimestampsInternal(fileNames);
+    const connection = await getActiveConnection();
+    token = connection.token;
+    return await getCreationTimestampsInternal(fileNames, connection.branch);
   } catch (error) {
     throw sanitizeError(error, token);
   }
@@ -683,7 +754,8 @@ export async function moveTaskFile(
   let token = "";
 
   try {
-    token = getGitToken();
+    const connection = await getActiveConnection();
+    token = connection.token;
     const repositoryDirectory = await requireCheckout();
     const source = repositoryPath(move.sourcePath);
     const destination = repositoryPath(move.destinationPath);
@@ -715,10 +787,10 @@ export async function moveTaskFile(
     await git.commit({
       fs: gitFileSystem.gitFs,
       dir: repositoryDirectory,
-      ref: BRANCH,
+      ref: connection.branch,
       message,
-      author: AUTHOR,
-      committer: AUTHOR,
+      author: connection.author,
+      committer: connection.author,
     });
 
     invalidateCreationCache();
@@ -731,7 +803,8 @@ export async function restoreTaskFile(move: TaskMove): Promise<void> {
   let token = "";
 
   try {
-    token = getGitToken();
+    const connection = await getActiveConnection();
+    token = connection.token;
     await requireCheckout();
 
     const source = repositoryPath(move.sourcePath);
@@ -759,14 +832,15 @@ export async function resetTaskIndex(
   let token = "";
 
   try {
-    token = getGitToken();
+    const connection = await getActiveConnection();
+    token = connection.token;
     const repositoryDirectory = await requireCheckout();
 
     for (const filepath of new Set(paths)) {
       await git.resetIndex({
         fs: gitFileSystem.gitFs,
         dir: repositoryDirectory,
-        ref: BRANCH,
+        ref: connection.branch,
         filepath,
       });
     }
@@ -785,9 +859,10 @@ export async function pushRepository(): Promise<void> {
       requireGitCorsProxy();
     }
 
-    token = getGitToken();
+    const connection = await getActiveConnection();
+    token = connection.token;
     const repositoryDirectory = await requireCheckout();
-    await pushRepositoryInternal(token, repositoryDirectory);
+    await pushRepositoryInternal(connection, repositoryDirectory);
   } catch (error) {
     throw sanitizeError(error, token);
   }
