@@ -39,5 +39,5 @@
 
 - [x] 7.1 Run `npm run typecheck` and confirm it passes with no TypeScript errors.
 - [x] 7.2 In a browser, verify first launch with no saved settings opens settings, entering valid values saves without network, Clone loads the configured branch, reloading keeps the token, and an invalid token stays on the list with a readable error banner.
-- [ ] 7.3 On Android or iOS, verify the token is saved through SecureStore, the settings route opens from the cog and on first launch, Clone and pull use the configured branch, and a task commit uses the saved author or the fallback identity when fields are blank.
+- [x] 7.3 On Android or iOS, verify the token is saved through SecureStore, the settings route opens from the cog and on first launch, Clone and pull use the configured branch, and a task commit uses the saved author or the fallback identity when fields are blank.
 - [x] 7.4 Run `openspec validate add-git-settings-screen` and confirm the change validates after implementation.
