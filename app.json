@@ -14,7 +14,13 @@
     "ios": {
       "supportsTablet": true
     },
+    "extra": {
+      "eas": {
+        "projectId": "0841a593-74f7-40e2-b98b-fe2076d06537"
+      }
+    },
     "android": {
+      "package": "com.capster.todoapp",
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/android-icon-foreground.png",
